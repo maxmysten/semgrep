@@ -70,6 +70,7 @@ and pl_type =
   | Erlang
   | Go
   | Rust
+  | Move_on_sui
   | Move_on_aptos
   | Beta
   | Pascal
@@ -394,6 +395,7 @@ let file_type_of_file file =
   | "mk" -> Config Makefile
   | "rs" -> PL Rust
   | "move" -> PL Move_on_aptos
+  | "move" -> PL Move_on_sui
   | "mod"
   | "go" ->
       PL Go

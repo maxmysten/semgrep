@@ -340,7 +340,9 @@ let all_actions (caps : Cap.all_caps) () =
     ( "-check_rules",
       " <metachecks file> <files or dirs>",
       Arg_.mk_action_n_conv Fpath.v
-        (Check_rule.check_files (caps :> < Cap.stdout >) !output_format) );
+        (Check_rule.check_files
+           (caps :> < Cap.stdout ; Cap.fork ; Cap.alarm >)
+           !output_format) );
     (* this is run by some of our workflows (e.g., check-pro-rules.jsonnet) *)
     ( "-test_rules",
       " <files or dirs>",
@@ -353,6 +355,7 @@ let all_actions (caps : Cap.all_caps) () =
       " <files or dirs> generate parsing statistics (use -json for JSON output)",
       Arg_.mk_action_n_arg (fun xs ->
           Test_parsing.parsing_stats
+            (caps :> < Cap.alarm >)
             (Xlang.lang_of_opt_xlang_exn !lang)
             ~json:
               (match !output_format with
@@ -468,6 +471,7 @@ let all_actions (caps : Cap.all_caps) () =
       " <files or dirs> look for parsing regressions",
       Arg_.mk_action_n_arg (fun xs ->
           Test_parsing.parsing_regressions
+            (caps :> < Cap.alarm >)
             (Xlang.lang_of_opt_xlang_exn !lang)
             (Fpath_.of_strings xs)) );
     ( "-test_parse_tree_sitter",
@@ -801,7 +805,7 @@ let main_exn (caps : Cap.all_caps) (argv : string array) : unit =
             let config =
               { config with target_source; ncores; top_level_span = span_id }
             in
-            let res = Core_scan.scan (caps :> < >) config in
+            let res = Core_scan.scan (caps :> Core_scan.caps) config in
             output_core_results (caps :> < Cap.stdout ; Cap.exit >) res config
           in
 

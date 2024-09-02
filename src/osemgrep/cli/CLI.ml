@@ -43,7 +43,9 @@ type caps =
   ; Cap.random
   ; Cap.signal
   ; Cap.tmp
-  ; Cap.chdir >
+  ; Cap.chdir
+  ; Cap.fork
+  ; Cap.alarm >
 
 let default_subcommand = "scan"
 
@@ -196,21 +198,34 @@ let dispatch_subcommand (caps : caps) (argv : string array) =
         (* partial support, still use Pysemgrep.Fallback in it *)
         | "scan" ->
             Scan_subcommand.main
-              (caps :> < Cap.stdout ; Cap.network ; Cap.tmp ; Cap.chdir >)
+              (caps
+                :> < Cap.stdout
+                   ; Cap.network
+                   ; Cap.tmp
+                   ; Cap.chdir
+                   ; Cap.fork
+                   ; Cap.alarm >)
               subcmd_argv
         | "ci" ->
             Ci_subcommand.main
               (caps
-                :> < Cap.stdout ; Cap.network ; Cap.exec ; Cap.tmp ; Cap.chdir >)
+                :> < Cap.stdout
+                   ; Cap.network
+                   ; Cap.exec
+                   ; Cap.tmp
+                   ; Cap.chdir
+                   ; Cap.fork
+                   ; Cap.alarm >)
               subcmd_argv
         | "install-semgrep-pro" ->
             Install_semgrep_pro_subcommand.main
-              (caps :> < Cap.network >)
+              (caps :> < Cap.network ; Cap.alarm >)
               subcmd_argv
         (* osemgrep-only: and by default! no need experimental! *)
         | "lsp" ->
             Lsp_subcommand.main
-              (caps :> < Cap.random ; Cap.network ; Cap.tmp >)
+              (caps
+                :> < Cap.random ; Cap.network ; Cap.tmp ; Cap.fork ; Cap.alarm >)
               subcmd_argv
         | "logout" ->
             Logout_subcommand.main (caps :> < Cap.stdout >) subcmd_argv

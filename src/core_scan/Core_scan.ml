@@ -115,6 +115,9 @@ module Out = Semgrep_output_v1_j
    semgrep and semgrep-proprietary use the same definition *)
 type func = Core_scan_config.t -> Core_result.result_or_exn
 
+(* TODO: stdout (sometimes) *)
+type caps = < Cap.fork ; Cap.alarm >
+
 (* A target is [Not_scanned] when semgrep didn't find any applicable rules.
  * The information is useful to return to pysemgrep/osemgrep to
  * display statistics.
@@ -462,8 +465,9 @@ let errors_of_timeout_or_memory_exn (exn : exn) (target : Target.t) : ESet.t =
 (*****************************************************************************)
 
 (* Returns a list of match results and a separate list of scanned targets *)
-let iter_targets_and_get_matches_and_exn_to_errors (config : Core_scan_config.t)
-    (handle_target : target_handler) (targets : Target.t list) :
+let iter_targets_and_get_matches_and_exn_to_errors (caps : < Cap.fork >)
+    (config : Core_scan_config.t) (handle_target : target_handler)
+    (targets : Target.t list) :
     Core_profiling.file_profiling Core_result.match_result list * Fpath.t list =
   (* The path in match_and_path_list is None when the file was not scanned *)
   let (match_and_path_list
@@ -472,7 +476,7 @@ let iter_targets_and_get_matches_and_exn_to_errors (config : Core_scan_config.t)
           list) =
     targets
     |> Parmap_targets.map_targets__run_in_forked_process_do_not_modify_globals
-         config.ncores (fun (target : Target.t) ->
+         caps config.ncores (fun (target : Target.t) ->
            let internal_path = Target.internal_path target in
            let noprof = Core_profiling.empty_partial_profiling internal_path in
            Logs.debug (fun m -> m "Core_scan analyzing %s" !!internal_path);
@@ -588,6 +592,7 @@ let filter_existing_targets (targets : Target.t list) :
          else
            match Target.origin target with
            | File path ->
+               Logs.warn (fun m -> m "skipping %s which does not exist" !!path);
                Right
                  {
                    Semgrep_output_v1_t.path;
@@ -628,67 +633,6 @@ let targets_of_config (config : Core_scan_config.t) :
           |> In.targets_of_string
           |> List_.map Target.target_of_input_to_core
           |> filter_existing_targets)
-
-(* DEPRECATED
- * Compute the set of targets, either by reading what was passed
- * in -target, or by using our poor's man file targeting with
- * Find_targets_old.files_of_dirs_or_files.
- *)
-let targets_of_config_DEPRECATED (config : Core_scan_config.t) :
-    Target.t list * Out.skipped_target list =
-  match (config.target_source, config.roots, config.lang) with
-  (* We usually let semgrep-python computes the list of targets (and pass it
-   * via -target), but it's convenient to also run semgrep-core without
-   * semgrep-python and to recursively get a list of targets.
-   * We just have a poor's man file targeting/filtering here, just enough
-   * to run semgrep-core independently of semgrep-python to test things.
-   *)
-  | None, roots, Some xlang ->
-      (* less: could also apply Common.fullpath? *)
-      let lang_opt =
-        match xlang with
-        | Xlang.LRegex
-        | Xlang.LSpacegrep
-        | Xlang.LAliengrep ->
-            None (* we will get all the files *)
-        | Xlang.L (lang, []) -> Some lang
-        (* config.lang comes from Xlang.of_string which returns just a lang *)
-        | Xlang.L (_, _) -> assert false
-      in
-      let files, skipped =
-        roots
-        |> List_.map Scanning_root.to_fpath
-        |> Find_targets_old.files_of_dirs_or_files lang_opt
-      in
-      let target_mappings =
-        files
-        |> List_.map (fun file : Target.t ->
-               Regular (Target.mk_regular xlang Product.all (Origin.File file)))
-      in
-      (target_mappings, skipped)
-  | None, _, None -> failwith "you need to specify a language with -lang"
-  (* main code path for semgrep python, with targets specified by -target *)
-  | Some _target_source, roots, lang_opt -> (
-      (* sanity checking *)
-      (* in deep mode we actually have a single root dir passed *)
-      if roots <> [] then
-        Logs.warn (fun m ->
-            m "if you use -targets, you should not specify files");
-      (* TODO: ugly, this is because the code path for -e/-f requires
-       * a language, even with a -target, see test_target_file.py
-       *)
-      if lang_opt <> None then
-        failwith "if you use -targets and -rules, you should not specify a lang";
-      match config.target_source with
-      | None -> failwith "you need to specify targets with -targets"
-      | Some target_source -> (
-          match target_source with
-          | Targets x -> x |> filter_existing_targets
-          | Target_file target_file ->
-              UFile.read_file target_file
-              |> In.targets_of_string
-              |> List_.map Target.target_of_input_to_core
-              |> filter_existing_targets))
 
 (*****************************************************************************)
 (* Rule selection *)
@@ -811,7 +755,8 @@ let sca_rules_filtering (target : Target.regular) (rules : Rule.t list) :
 (*****************************************************************************)
 
 (* build the callback for iter_targets_and_get_matches_and_exn_to_errors *)
-let mk_target_handler (config : Core_scan_config.t) (valid_rules : Rule.t list)
+let mk_target_handler (caps : < Cap.alarm >) (config : Core_scan_config.t)
+    (valid_rules : Rule.t list)
     (prefilter_cache_opt : Match_env.prefilter_config) : target_handler =
   (* Note that this function runs in another process *)
   function
@@ -852,7 +797,7 @@ let mk_target_handler (config : Core_scan_config.t) (valid_rules : Rule.t list)
       let match_hook pm = print_incremental_matches_when_text_mode config pm in
       let xconf =
         {
-          Match_env.config = Rule_options.default_config;
+          Match_env.config = Rule_options.default;
           equivs = parse_equivalences config.equivalences_file;
           nested_formula = false;
           matching_explanations = config.matching_explanations;
@@ -860,11 +805,20 @@ let mk_target_handler (config : Core_scan_config.t) (valid_rules : Rule.t list)
         }
       in
       let rules, dependency_match_table = sca_rules_filtering target rules in
+      let timeout =
+        let caps = (caps :> < Cap.alarm >) in
+        Some
+          Match_rules.
+            {
+              timeout = config.timeout;
+              threshold = config.timeout_threshold;
+              caps;
+            }
+      in
       let matches =
         (* !!Calling Match_rules!! Calling the matching engine!! *)
-        Match_rules.check ~match_hook ~timeout:config.timeout
-          ~timeout_threshold:config.timeout_threshold ~dependency_match_table
-          xconf rules xtarget
+        Match_rules.check ~match_hook ~timeout ~dependency_match_table xconf
+          rules xtarget
         |> set_matches_to_proprietary_origin_if_needed xtarget
       in
       (* So we can display matches incrementally in osemgrep!
@@ -876,7 +830,7 @@ let mk_target_handler (config : Core_scan_config.t) (valid_rules : Rule.t list)
       (matches, was_scanned)
 
 (* coupling: with Deep_scan.scan_aux() *)
-let scan_exn (_caps : < >) (config : Core_scan_config.t)
+let scan_exn (caps : caps) (config : Core_scan_config.t)
     (rules : Rule_error.rules_and_invalid * float) : Core_result.t =
   Logs.debug (fun m -> m "Core_scan.scan_exn %s" (Core_scan_config.show config));
   (* the rules *)
@@ -896,8 +850,12 @@ let scan_exn (_caps : < >) (config : Core_scan_config.t)
   in
   let file_results, scanned_targets =
     targets
-    |> iter_targets_and_get_matches_and_exn_to_errors config
-         (mk_target_handler config valid_rules prefilter_cache_opt)
+    |> iter_targets_and_get_matches_and_exn_to_errors
+         (caps :> < Cap.fork >)
+         config
+         (mk_target_handler
+            (caps :> < Cap.alarm >)
+            config valid_rules prefilter_cache_opt)
   in
   let scanned = scanned_of_targets ~targets ~scanned_targets in
 
@@ -936,7 +894,7 @@ let scan_exn (_caps : < >) (config : Core_scan_config.t)
  * coupling: If you modify this function, you probably need also to modify
  * Deep_scan.scan() in semgrep-pro which is mostly a copy-paste of this file.
  *)
-let scan (caps : < >) (config : Core_scan_config.t) : Core_result.result_or_exn
+let scan (caps : caps) (config : Core_scan_config.t) : Core_result.result_or_exn
     =
   try
     let timed_rules =

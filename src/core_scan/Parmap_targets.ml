@@ -51,7 +51,7 @@ let sort_code_targets_by_decreasing_size (targets : Target.regular list) :
 (*****************************************************************************)
 
 (* Run jobs in parallel, using number of cores specified with -j *)
-let map_targets__run_in_forked_process_do_not_modify_globals (ncores : int)
+let map_targets__run_in_forked_process_do_not_modify_globals caps (ncores : int)
     (f : Target.t -> 'a) (targets : Target.t list) : 'a list =
   (*
      Sorting the targets by decreasing size is based on the assumption
@@ -88,7 +88,7 @@ let map_targets__run_in_forked_process_do_not_modify_globals (ncores : int)
      * So, despite it may hurt perf a bit, we disable core pinning to work around
      * this issue until this is fixed in a future version of Parmap.
      *)
-    Parmap.disable_core_pinning ();
+    Parmap_.disable_core_pinning ();
     assert (ncores > 0);
     (* TODO: port this functionality to Logs:
        let init _ = Logging.add_PID_tag () in
@@ -96,20 +96,21 @@ let map_targets__run_in_forked_process_do_not_modify_globals (ncores : int)
     Logs.debug (fun m ->
         m "running parmap with %d cores on %d targets" ncores
           (List.length targets));
-    Parmap.parmap ~ncores ~chunksize:1 f (Parmap.L targets))
+    Parmap_.parmap caps ~ncores ~chunksize:1 f targets)
 
-(* TODO: remove duplication, maybe update Deep_scan to handle
- * Target.t, not just Target.regular like we do in Core_scan
+(* remove duplication? But we now use this function below at a few places like
+ * in Deep_scan_phases and it would be uglier to wrap with [Target.Regular]
+ * and then unwrap in [f].
  *)
-let map_regular_targets__run_in_forked_process_do_not_modify_globals
+let map_regular_targets__run_in_forked_process_do_not_modify_globals caps
     (ncores : int) (f : Target.regular -> 'a) (targets : Target.regular list) :
     'a list =
   let targets = sort_code_targets_by_decreasing_size targets in
   if ncores <= 1 then List_.map f targets
   else (
-    Parmap.disable_core_pinning ();
+    Parmap_.disable_core_pinning ();
     assert (ncores > 0);
     Logs.debug (fun m ->
         m "running parmap with %d cores on %d targets" ncores
           (List.length targets));
-    Parmap.parmap ~ncores ~chunksize:1 f (Parmap.L targets))
+    Parmap_.parmap caps ~ncores ~chunksize:1 f targets)

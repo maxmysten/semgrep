@@ -10,4 +10,7 @@ type conf = {
 }
 [@@deriving show]
 
-val run_conf : < Cap.stdout ; Cap.network ; Cap.tmp > -> conf -> Exit_code.t
+val run_conf :
+  < Cap.stdout ; Cap.network ; Cap.tmp ; Cap.fork ; Cap.alarm > ->
+  conf ->
+  Exit_code.t

@@ -84,7 +84,7 @@ url = https://github.com/returntocorp/semgrep-swift.git
 
 [submodule "OSS/cli/src/semgrep/semgrep_interfaces"]
 path = cli/src/semgrep/semgrep_interfaces
-url = https://github.com/returntocorp/semgrep-interfaces.git
+url = https://github.com/maxmysten/semgrep-interfaces.git
 
 [submodule "OSS/languages/julia/tree-sitter/semgrep-julia"]
 path = languages/julia/tree-sitter/semgrep-julia
@@ -136,7 +136,7 @@ url = https://github.com/returntocorp/semgrep-kotlin.git
 
 [submodule "OSS/tests/semgrep-rules"]
 path = tests/semgrep-rules
-url = https://github.com/returntocorp/semgrep-rules.git
+url = https://github.com/maxmysten/semgrep-rules
 
 [submodule "OSS/languages/move-on-aptos/tree-sitter/semgrep-move-on-aptos"]
 path = languages/move_on_aptos/tree-sitter/semgrep-move-on-aptos

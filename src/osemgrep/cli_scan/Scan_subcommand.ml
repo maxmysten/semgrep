@@ -210,12 +210,12 @@ let output_and_exit_from_fatal_core_errors (caps : < Cap.stdout >)
 let mk_file_match_hook (conf : Scan_CLI.conf) (rules : Rule.rules)
     (printer : Scan_CLI.conf -> Out.cli_match list -> unit) (_file : Fpath.t)
     (match_results : Core_result.matches_single_file) : unit =
-  let (cli_matches : Out.cli_match list) =
+  let cli_matches : Out.cli_match list =
     (* need to go through a series of transformation so that we can
      * get something that Matches_report.pp_text_outputs can operate on
      *)
-    let (pms : Pattern_match.t list) = match_results.matches in
-    let (core_matches : Out.core_match list) =
+    let pms : Pattern_match.t list = match_results.matches in
+    let core_matches : Out.core_match list =
       pms
       (* OK, because we don't need the postprocessing to report the matches. *)
       |> List_.map Core_result.mk_processed_match
@@ -228,23 +228,18 @@ let mk_file_match_hook (conf : Scan_CLI.conf) (rules : Rule.rules)
     |> List_.map
          (Cli_json_output.cli_match_of_core_match
             ~fixed_lines:conf.output_conf.fixed_lines fixed_env hrules)
-  in
-  let cli_matches =
-    cli_matches
-    |> List_.exclude (fun (m : Out.cli_match) ->
-           Option.value ~default:false m.extra.is_ignored)
+    |> List_.exclude (fun (m : Out.cli_match) -> m.extra.is_ignored ||| false)
   in
   if cli_matches <> [] then (
     (* nosemgrep: forbid-console *)
     Unix.lockf Unix.stdout Unix.F_LOCK 0;
     Common.protect
-      (fun () ->
-        (* coupling: similar to Output.dispatch_output_format for Text *)
-        printer conf cli_matches)
+      (fun () -> printer conf cli_matches)
       ~finally:(fun () ->
         (* nosemgrep: forbid-console *)
         Unix.lockf Unix.stdout Unix.F_ULOCK 0))
 
+(* coupling: similar to Output.dispatch_output_format for Text *)
 let incremental_text_printer (_caps : < Cap.stdout >) (conf : Scan_CLI.conf)
     (cli_matches : Out.cli_match list) : unit =
   (* TODO: we should switch to Fmt_.with_buffer_to_string +
@@ -418,7 +413,7 @@ let uniq_rules_and_error_if_empty_rules rules =
   else Ok rules
 
 (* Select and execute the scan func based on the configured engine settings *)
-let mk_core_run_for_osemgrep (caps : < Cap.tmp >) (conf : Scan_CLI.conf)
+let mk_core_run_for_osemgrep (caps : < >) (conf : Scan_CLI.conf)
     (diff_config : Differential_scan_config.t) : Core_runner.func =
   let core_run_for_osemgrep : Core_runner.func =
     match conf.engine_type with
@@ -539,7 +534,9 @@ let check_targets_with_rules (caps : < Cap.stdout ; Cap.chdir ; Cap.tmp >)
   in
   let/ rules = uniq_rules_and_error_if_empty_rules rules in
   let rules = Rule_filtering.filter_rules conf.rule_filtering_conf rules in
-  Logs.info (fun m -> m "%a" Rules_report.pp_rules (conf.rules_source, rules));
+  let too_many_entries = conf.output_conf.max_log_list_entries in
+  Logs.info (fun m ->
+      m "%a" (Rules_report.pp_rules ~too_many_entries) (conf.rules_source, rules));
 
   (* step 2: printing the skipped targets *)
   let targets, skipped = targets_and_skipped in
@@ -565,7 +562,7 @@ let check_targets_with_rules (caps : < Cap.stdout ; Cap.chdir ; Cap.tmp >)
         Profiler.record profiler ~name:"core_time" (fun () ->
             let core_run_for_osemgrep =
               mk_core_run_for_osemgrep
-                (caps :> < Cap.tmp >)
+                (caps :> < >)
                 conf Differential_scan_config.WholeScan
             in
             core_run_for_osemgrep.run ~file_match_hook conf.core_runner_conf
@@ -576,7 +573,7 @@ let check_targets_with_rules (caps : < Cap.stdout ; Cap.chdir ; Cap.tmp >)
         let diff_scan_func : Diff_scan.diff_scan_func =
          fun ?(diff_config = Differential_scan_config.WholeScan) targets rules ->
           let core_run_for_osemgrep =
-            mk_core_run_for_osemgrep (caps :> < Cap.tmp >) conf diff_config
+            mk_core_run_for_osemgrep (caps :> < >) conf diff_config
           in
           core_run_for_osemgrep.run ~file_match_hook conf.core_runner_conf
             conf.targeting_conf (rules, invalid_rules) targets
@@ -640,7 +637,8 @@ let check_targets_with_rules (caps : < Cap.stdout ; Cap.chdir ; Cap.tmp >)
 
       let skipped_groups = Skipped_report.group_skipped skipped in
       Logs.info (fun m ->
-          m "%a" Skipped_report.pp_skipped
+          m "%a"
+            (Skipped_report.pp_skipped ~too_many_entries)
             ( conf.targeting_conf.respect_gitignore,
               conf.common.maturity,
               conf.targeting_conf.max_target_bytes,
@@ -834,14 +832,10 @@ let run_conf (caps : caps) (conf : Scan_CLI.conf) : Exit_code.t =
   Logs.info (fun m -> m "Semgrep version: %s" Version.version);
 
   let conf =
-    (* ugly: also partially done in CLI.ml *)
-    (* TOADAPT
-       if config.debug then Report.mode := MDebug
-       else if config.report_time then Report.mode := MTime
-       else Report.mode := MNo_info;
-    *)
     if conf.common.profile then (
-      (* ugly: no need to set Common.profile, this was done in CLI.ml *)
+      (* ugly: no need to set Profiling.profile, this was done in CLI.ml
+       * See also Core_profiling.profiling set in run_scan_conf() above.
+       *)
       Logs.warn (fun m -> m "Profile mode On (running one job, ignoring -j)");
       {
         conf with

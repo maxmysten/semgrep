@@ -15,7 +15,10 @@ module Env = Semgrep_envvars
 (* Types *)
 (*************************************************************************)
 
-(* input *)
+(* input
+ * LATER: ideally we can cleanup Core_scan_config.ml enough that we don't
+ * need this extra type can can just reuse Core_scan_config.t as is.
+ *)
 type conf = {
   (* opti and limits *)
   num_jobs : int;
@@ -24,6 +27,11 @@ type conf = {
   timeout : float;
   timeout_threshold : int; (* output flags *)
   (* features *)
+  (* TODO: move nosem in Scan_CLI.conf and handled it Scan_subcommand.ml.
+   * Core_scan does not use nosem anymore, or more precisely it always
+   * have nosem=true and return findings with ignore=false and assume
+   * the caller will handle the ignored findings.
+   *)
   nosem : bool;
   strict : bool;
   (* useful for debugging rules *)
@@ -38,6 +46,7 @@ type conf = {
 
 type pro_conf = {
   diff_config : Differential_scan_config.t;
+  (* TODO: change to root: Fpath.t, like in Deep_scan_config.interfile_config *)
   roots : Scanning_root.t list;
   engine_type : Engine_type.t;
 }
@@ -223,17 +232,14 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
    max_memory_mb;
    optimizations;
    matching_explanations;
-   nosem;
+   nosem = _TODO;
    strict;
    time_flag;
    (* TODO *)
    dataflow_traces = _;
   } ->
-      (* We default to Json because we do not want the current text
-       * displayed in semgrep-core, and we don't want either the
-       * current semgrep-core incremental matches text output.
-       *)
-      let output_format = Core_scan_config.Json false (* no dots *) in
+      (* We do our own output in osemgrep, no need for Core_scan.scan() output *)
+      let output_format = Core_scan_config.NoOutput in
       let filter_irrelevant_rules = optimizations in
       {
         Core_scan_config.default with
@@ -244,9 +250,7 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
         max_memory_mb;
         filter_irrelevant_rules;
         matching_explanations;
-        nosem;
         strict;
-        version = Version.version;
         report_time = time_flag;
       }
 
@@ -271,7 +275,7 @@ let prepare_config_for_core_scan (config : Core_scan_config.t)
   {
     config with
     target_source = Some (Targets targets);
-    rule_source = Some (Rules rules);
+    rule_source = Rules rules;
   }
 
 (* LATER: we want to avoid this intermediate data structure but

@@ -1,6 +1,6 @@
 (* Yoann Padioleau
  *
- * Copyright (C) 2019-2021 Semgrep Inc.
+ * Copyright (C) 2019-2024 Semgrep Inc.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -93,7 +93,7 @@ let check_mvars_of_condition env bound_mvs (t, condition) =
   | CondEval _ -> []
   | CondRegexp (mv, _, _)
   | CondType (mv, _, _, _)
-  | CondName (mv, _)
+  | CondName { mvar = mv; _ }
   | CondNestedFormula (mv, _, _)
   | CondAnalysis (mv, _) ->
       if not (mvar_is_ok mv bound_mvs) then [ mv_error env mv t ] else []
@@ -248,7 +248,7 @@ let check r =
   | `Steps _ -> (* TODO *) []
   | `SCA _ -> (* TODO *) []
 
-let semgrep_check (caps : < Cap.tmp >) config metachecks rules :
+let semgrep_check (caps : < >) (metachecks : Fpath.t) (rules : Fpath.t list) :
     Core_error.t list =
   let match_to_semgrep_error (m : Pattern_match.t) : Core_error.t =
     let loc, _ = m.P.range_loc in
@@ -258,14 +258,19 @@ let semgrep_check (caps : < Cap.tmp >) config metachecks rules :
     (* TODO: why not set ~rule_id here?? bug? *)
     E.mk_error ~msg:s loc OutJ.SemgrepMatchFound
   in
+  (* LATER: what if the rule is written in Jsonnet or JSON ? *)
+  let lang : Lang.t = Yaml in
+  (* the targets are actually the rules! metachecking! *)
+  let targets : Target.t list =
+    rules |> List_.map (fun file -> Target.mk_target (Xlang.of_lang lang) file)
+  in
   let (config : Core_scan_config.t) =
     {
-      config with
-      lang = Some (Xlang.of_lang Yaml);
-      rule_source = Some (Rule_file metachecks);
+      Core_scan_config.default with
+      rule_source = Rule_file metachecks;
+      target_source = Some (Targets targets);
+      (* we're used from pysemgrep --validate *)
       output_format = Json true;
-      (* the targets are actually the rules! metachecking! *)
-      roots = List_.map Scanning_root.of_fpath rules;
     }
   in
   let res = Core_scan.scan caps config in
@@ -276,13 +281,8 @@ let semgrep_check (caps : < Cap.tmp >) config metachecks rules :
       |> List_.map match_to_semgrep_error
   | Error exn -> Exception.reraise exn
 
-(* TODO *)
-
-(* We parse the parsing function fparser (Parser_rule.parse) to avoid
- * circular dependencies.
- * Similar to Test_parsing.test_parse_rules.
- *)
-let run_checks (caps : < Cap.tmp >) config fparser metachecks xs =
+let run_checks (caps : < >) (metachecks : Fpath.t) (xs : Fpath.t list) :
+    Core_error.t list =
   let yaml_xs, skipped_paths =
     xs
     |> File_type.files_of_dirs_or_files (function
@@ -300,13 +300,13 @@ let run_checks (caps : < Cap.tmp >) config fparser metachecks xs =
           m "no valid yaml rules to run on (.test.yaml files are excluded)");
       []
   | _ ->
-      let semgrep_found_errs = semgrep_check caps config metachecks rules in
+      let semgrep_found_errs = semgrep_check caps metachecks rules in
       let ocaml_found_errs =
         rules
         |> List.concat_map (fun file ->
                Logs.info (fun m ->
                    m "run_checks: processing rule file %s" !!file);
-               match fparser file with
+               match Parse_rule.parse file with
                | Ok rs -> rs |> List.concat_map (fun file -> check file)
                (* TODO this error is special cased because YAML files that
                   aren't semgrep rules are getting scanned *)
@@ -318,9 +318,10 @@ let run_checks (caps : < Cap.tmp >) config fparser metachecks xs =
       in
       semgrep_found_errs @ ocaml_found_errs
 
-(* for semgrep-core -check_rules *)
-let check_files (caps : < Cap.stdout ; Cap.tmp >) mk_config fparser input =
-  let config = mk_config () in
+(* for semgrep-core -check_rules, called from pysemgrep --validate *)
+let check_files (caps : < Cap.stdout >)
+    (output_format : Core_scan_config.output_format) (input : Fpath.t list) :
+    unit =
   let errors =
     match input with
     | []
@@ -329,11 +330,11 @@ let check_files (caps : < Cap.stdout ; Cap.tmp >) mk_config fparser input =
           (No_metacheck_file
              "check_rules needs a metacheck file or directory and rules to run \
               on")
-    | metachecks :: xs ->
-        run_checks (caps :> < Cap.tmp >) config fparser metachecks xs
+    | metachecks :: xs -> run_checks (caps :> < >) metachecks xs
   in
-  match config.output_format with
-  | Text ->
+  match output_format with
+  | NoOutput -> ()
+  | Text _ ->
       errors
       |> List.iter (fun err ->
              Logs.err (fun m -> m "%s" (E.string_of_error err)))
@@ -345,7 +346,7 @@ let check_files (caps : < Cap.stdout ; Cap.tmp >) mk_config fparser input =
       CapConsole.print caps#stdout (SJ.string_of_core_output json)
 
 (* for semgrep-core -stat_rules *)
-let stat_files (caps : < Cap.stdout >) fparser xs =
+let stat_files (caps : < Cap.stdout >) xs =
   let fullxs, _skipped_paths =
     xs
     |> File_type.files_of_dirs_or_files (function
@@ -359,7 +360,7 @@ let stat_files (caps : < Cap.stdout >) fparser xs =
   fullxs
   |> List.iter (fun file ->
          Logs.info (fun m -> m "stat_files: processing rule file %s" !!file);
-         match fparser file with
+         match Parse_rule.parse file with
          | Ok rs ->
              rs
              |> List.iter (fun r ->

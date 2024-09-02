@@ -1,6 +1,6 @@
 (* Cooper Pierce
  *
- * Copyright (c) Semgrep Inc.
+ * Copyright (c) 2024, Semgrep Inc.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -12,8 +12,17 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the file
  * LICENSE for more details.
  *)
+module Out = Semgrep_output_v1_t
+module In = Input_to_core_t
 
+(*****************************************************************************)
+(* Prelude *)
+(*****************************************************************************)
 (* See Target.mli for documentation of public items. *)
+
+(*****************************************************************************)
+(* Types *)
+(*****************************************************************************)
 
 type path = { origin : Origin.t; internal_path_to_content : Fpath.t }
 [@@deriving show, eq]
@@ -33,7 +42,7 @@ let pp_debug_lockfile f t =
 type regular = {
   path : path;
   analyzer : Xlang.t;
-  products : Semgrep_output_v1_t.product list;
+  products : Out.product list;
   lockfile : lockfile option;
 }
 [@@deriving show]
@@ -48,6 +57,10 @@ type t = Regular of regular | Lockfile of lockfile [@@deriving show]
 let pp_debug f = function
   | Regular t -> Format.fprintf f "target file: %a" pp_debug_regular t
   | Lockfile t -> Format.fprintf f "target lockfile: %a" pp_debug_lockfile t
+
+(*****************************************************************************)
+(* Helpers *)
+(*****************************************************************************)
 
 (** [tempfile_of_git_blob sha] is the path to a newly created temporary file
     which contains the contents of the git blob object identified by [sha] *)
@@ -70,6 +83,10 @@ let path_of_origin (origin : Origin.t) : path =
   | GitBlob { sha; _ } ->
       { origin; internal_path_to_content = tempfile_of_git_blob sha }
 
+(*****************************************************************************)
+(* Builders *)
+(*****************************************************************************)
+
 let mk_regular ?lockfile analyzer products (origin : Origin.t) : regular =
   { path = path_of_origin origin; analyzer; products; lockfile }
 
@@ -78,6 +95,40 @@ let mk_lockfile ?manifest kind (origin : Origin.t) : lockfile =
 
 let mk_manifest kind (origin : Origin.t) : manifest =
   { path = path_of_origin origin; kind }
+
+let mk_target (xlang : Xlang.t) (file : Fpath.t) : t =
+  let all = Product.all in
+  (* TODO: should do the check in the other mk_xxx ? *)
+  assert (UFile.is_file file);
+  Regular (mk_regular xlang all (Origin.File file))
+
+(*****************************************************************************)
+(* Input_to_core -> Target *)
+(*****************************************************************************)
+
+let manifest_target_of_input_to_core
+    ({ path; manifest_kind = kind } : In.manifest_target) : manifest =
+  mk_manifest kind (File (Fpath.v path))
+
+let lockfile_target_of_input_to_core
+    ({ path; lockfile_kind = kind; manifest_target } : In.lockfile_target) :
+    lockfile =
+  let manifest = Option.map manifest_target_of_input_to_core manifest_target in
+  mk_lockfile ?manifest kind (File (Fpath.v path))
+
+let code_target_location_of_input_to_core
+    ({ path; analyzer; products; lockfile_target } : In.code_target) : regular =
+  let lockfile = Option.map lockfile_target_of_input_to_core lockfile_target in
+  mk_regular ?lockfile analyzer products (File (Fpath.v path))
+
+let target_of_input_to_core (input : In.target) : t =
+  match input with
+  | `CodeTarget x -> Regular (code_target_location_of_input_to_core x)
+  | `LockfileTarget x -> Lockfile (lockfile_target_of_input_to_core x)
+
+(*****************************************************************************)
+(* Accessors *)
+(*****************************************************************************)
 
 let internal_path (target : t) : Fpath.t =
   match target with

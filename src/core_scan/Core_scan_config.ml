@@ -1,9 +1,17 @@
-(* in JSON mode, we might need to display intermediate '.' in the
- * output for pysemgrep to track progress as well as extra targets
- * found by extract rules.
- * LATER: osemgrep: not needed after osemgrep migration done
- *)
-type output_format = Text | Json of bool (* dots *) [@@deriving show]
+(* LATER: osemgrep: not needed after osemgrep migration done *)
+type output_format =
+  (* The mvars are from semgrep-core -pvars to print info on the
+   * matched variables instead of the matched content.
+   *)
+  | Text of Metavariable.mvar list
+  (* In JSON mode, we might need to display intermediate '.' in the
+   * output for pysemgrep to track progress as well as extra targets
+   * found by extract-mode rules, hence the bool below.
+   *)
+  | Json of bool (* dots *)
+  (* for osemgrep *)
+  | NoOutput
+[@@deriving show]
 
 (*
    'Rule_file' is for the semgrep-core CLI.
@@ -24,36 +32,29 @@ type rule_source = Rule_file of Fpath.t | Rules of Rule.t list
 type target_source = Target_file of Fpath.t | Targets of Target.t list
 [@@deriving show]
 
-(* This is essentially the flags for the semgrep-core program.
- * LATER: should delete or merge with osemgrep Scan_CLI.conf.
+(* This is mostly the flags of the semgrep-core program.
+ * LATER: should delete or merge with osemgrep Core_runner.conf
  *)
 type t = {
-  (* Debugging/profiling/logging flags *)
-  log_to_file : Fpath.t option;
-  nosem : bool;
-  strict : bool;
-  test : bool;
-  debug : bool;
-  profile : bool;
-  trace : bool;
-  trace_endpoint : string option;
-  report_time : bool;
-  error_recovery : bool;
-  profile_start : float;
-  matching_explanations : bool;
-  (* Main flags *)
-  pattern_string : string option;
-  pattern_file : Fpath.t option;
-  rule_source : rule_source option;
-  equivalences_file : Fpath.t option;
-  lang : Xlang.t option;
-  (* Scanning roots. They are mutually exclusive with target_source! *)
+  (* Main flags, input *)
+  rule_source : rule_source;
+  target_source : target_source option;
+  (* TODO: remove roots and lang, and once removed remove the option above *)
   roots : Scanning_root.t list;
+  lang : Xlang.t option;
+  equivalences_file : Fpath.t option;
+  (* output and result tweaking *)
   output_format : output_format;
-  match_format : Core_text_output.match_format;
-  mvars : Metavariable.mvar list;
-  (* Tweaking *)
+  report_time : bool;
+  matching_explanations : bool;
+  strict : bool;
   respect_rule_paths : bool;
+  (* Hook to display match results incrementally, after a file has been fully
+   * processed. Note that this hook run in a child process of Parmap
+   * in Core_scan.scan(), so the hook should not rely on shared memory!
+   * This is also now used in Runner_service.ml and Git_remote.ml.
+   *)
+  file_match_hook : (Fpath.t -> Core_result.matches_single_file -> unit) option;
   (* Limits *)
   (* maximum time to spend running a rule on a single file *)
   timeout : float;
@@ -62,19 +63,12 @@ type t = {
   max_memory_mb : int;
   max_match_per_file : int;
   ncores : int;
+  (* a.k.a -fast (on by default) *)
   filter_irrelevant_rules : bool;
-  (* Hook to display match results incrementally, after a file has been fully
-   * processed. Note that this hook run in a child process of Parmap
-   * in Run_semgrep, so the hook should not rely on shared memory!
-   *)
-  file_match_hook : (Fpath.t -> Core_result.matches_single_file -> unit) option;
-  (* Flag used by pysemgrep *)
-  target_source : target_source option;
-  (* Common.ml action for the -dump_xxx *)
-  action : string;
-  (* Other *)
-  version : string;
-  (* To add data to our opentelemetry top span, which makes it easier to filter *)
+  (* debugging and telemetry flags *)
+  trace : bool;
+  trace_endpoint : string option;
+  (* To add data to our opentelemetry top span, so easier to filter *)
   top_level_span : Tracing.span option;
 }
 [@@deriving show]
@@ -92,31 +86,17 @@ type t = {
 *)
 let default =
   {
-    (* Debugging/profiling/logging flags *)
-    log_to_file = None;
-    nosem = true;
-    strict = false;
-    test = false;
-    debug = false;
-    profile = false;
-    trace = false;
-    trace_endpoint = None;
-    report_time = false;
-    error_recovery = false;
-    profile_start = 0.;
-    matching_explanations = false;
     (* Main flags *)
-    pattern_string = None;
-    pattern_file = None;
-    rule_source = None;
+    rule_source = Rules [];
+    target_source = None;
     equivalences_file = None;
-    lang = None;
-    roots = [];
-    output_format = Text;
-    match_format = Core_text_output.Normal;
-    mvars = [];
-    (* tweaking *)
+    (* alt: NoOutput but then would need a -text in Core_CLI.ml *)
+    output_format = Text [];
+    report_time = false;
+    matching_explanations = false;
+    strict = false;
     respect_rule_paths = true;
+    file_match_hook = None;
     (* Limits *)
     (* maximum time to spend running a rule on a single file *)
     timeout = 0.;
@@ -127,12 +107,11 @@ let default =
     ncores = 1;
     (* a.k.a -fast, on by default *)
     filter_irrelevant_rules = true;
-    file_match_hook = None;
-    (* Flag used by the semgrep-python wrapper *)
-    target_source = None;
-    (* Common.ml action for the -dump_xxx *)
-    action = "";
-    (* Other *)
-    version = "";
+    (* debugging and telemetry flags *)
+    trace = false;
+    trace_endpoint = None;
     top_level_span = None;
+    (* TODO: deprecated, remove *)
+    roots = [];
+    lang = None;
   }

@@ -95,8 +95,7 @@ let tests (caps : Cap.all_caps) =
              ; Cap.chdir
              ; Cap.fork
              ; Cap.alarm >);
-      Unit_test_subcommand.tests
-        (caps :> < Cap.stdout ; Cap.network ; Cap.tmp >);
+      Unit_test_subcommand.tests (caps :> < Cap.stdout ; Cap.fork ; Cap.alarm >);
       Test_show_subcommand.tests
         (caps :> < Cap.stdout ; Cap.network ; Cap.tmp >);
       Test_publish_subcommand.tests
@@ -111,9 +110,10 @@ let tests (caps : Cap.all_caps) =
       (* End OSemgrep tests *)
       Spacegrep_tests.Test.tests ();
       Aliengrep.Unit_tests.tests;
+      Unit_core_json_output.tests;
+      Test_core_CLI.tests (caps :> Cap.all_caps);
       (* Inline tests *)
       Testo.get_registered_tests ();
-      Unit_core_json_output.tests;
     ]
 
 (*****************************************************************************)

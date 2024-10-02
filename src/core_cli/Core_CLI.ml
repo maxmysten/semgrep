@@ -53,8 +53,8 @@ let log_to_file = ref None
  *)
 let debug = ref false
 let profile = ref false
-let trace = ref Core_scan_config.default.trace
-let trace_endpoint = ref Core_scan_config.default.trace_endpoint
+let trace = ref false
+let trace_endpoint = ref None
 
 (* ------------------------------------------------------------------------- *)
 (* main flags *)
@@ -64,7 +64,7 @@ let trace_endpoint = ref Core_scan_config.default.trace_endpoint
 let rule_source = ref None
 
 (* -targets (takes the list of files in a file given by pysemgrep) *)
-let target_source : Core_scan_config.target_source option ref = ref None
+let target_file : Fpath.t option ref = ref None
 
 (* used for `semgrep-core -l <lang> <single file>` instead of
  * `semgrep-core -targets`. It is also used for semgrep-core "actions" as in
@@ -150,7 +150,7 @@ let _set_gc_TODO () =
 let dump_v_to_format (v : OCaml.v) =
   match !output_format with
   | NoOutput -> "<NoOutput>"
-  | Text _ -> OCaml.string_of_v v
+  | Text -> OCaml.string_of_v v
   | Json _ -> J.string_of_json (Core_actions.json_of_v v)
 
 let log_parsing_errors file (res : Parsing_result2.t) =
@@ -223,7 +223,7 @@ let dump_ast ?(naming = false) (caps : < Cap.stdout ; Cap.exit >)
 (*****************************************************************************)
 
 (* also used in semgrep-pro *)
-let output_core_results (caps : < Cap.stdout ; Cap.exit >)
+let output_core_results (caps : < Cap.stdout ; Cap.stderr ; Cap.exit >)
     (result_or_exn : Core_result.result_or_exn) (config : Core_scan_config.t) :
     unit =
   (* TODO: delete this comment and -stat_matches
@@ -244,8 +244,8 @@ let output_core_results (caps : < Cap.stdout ; Cap.exit >)
             Core_result.mk_result_with_just_errors [ err ]
       in
       let res =
-        Logs_.with_debug_trace "Core_CLI.core_output_of_matches_and_errors.1"
-          (fun () -> Core_json_output.core_output_of_matches_and_errors res)
+        Logs_.with_debug_trace ~__FUNCTION__ (fun () ->
+            Core_json_output.core_output_of_matches_and_errors res)
       in
       (*
         Not pretty-printing the json output (Yojson.Safe.prettify)
@@ -266,9 +266,22 @@ let output_core_results (caps : < Cap.stdout ; Cap.exit >)
    * print the errors here (and matching explanations).
    * LATER: you should now use osemgrep for this
    *)
-  | Text _ -> (
+  | Text -> (
       match result_or_exn with
       | Ok res ->
+          let matches =
+            res.processed_matches
+            |> List_.filter_map (fun processed_match ->
+                   match Core_json_output.match_to_match processed_match with
+                   | Error (e : Core_error.t) ->
+                       CapConsole.eprint caps#stderr
+                         (Core_error.string_of_error e);
+                       None
+                   | Ok (match_ : Out.core_match) -> Some match_)
+          in
+          let matches = Core_json_output.dedup_and_sort matches in
+          matches
+          |> List.iter (Core_text_output.print_match (caps :> < Cap.stdout >));
           if config.matching_explanations then
             res.explanations
             |> Option.iter (List.iter Matching_explanation.print);
@@ -285,14 +298,21 @@ let output_core_results (caps : < Cap.stdout ; Cap.exit >)
 (* Config *)
 (*****************************************************************************)
 
+(* Coupling: these need to be kept in sync with tracing.py *)
+let default_trace_endpoint = Uri.of_string "https://telemetry.semgrep.dev"
+let default_dev_endpoint = Uri.of_string "https://telemetry.dev2.semgrep.dev"
+let default_local_endpoint = Uri.of_string "http://localhost:4318"
+
 let mk_config () : Core_scan_config.t =
   {
     rule_source =
       (match !rule_source with
       | None -> failwith "missing -rules"
       | Some x -> x);
-    (* target_source will be adjusted later in main_exn() if needed *)
-    target_source = !target_source;
+    target_source =
+      (match !target_file with
+      | None -> Targets [] (* will be adjusted later in main_exn() *)
+      | Some file -> Target_file file);
     output_format = !output_format;
     strict = !strict;
     report_time = !report_time;
@@ -308,12 +328,21 @@ let mk_config () : Core_scan_config.t =
     ncores = !ncores;
     filter_irrelevant_rules = !filter_irrelevant_rules;
     (* open telemetry *)
-    trace = !trace;
-    trace_endpoint = !trace_endpoint;
-    top_level_span = None;
-    (* DEPRECATED: should be removed once Deep_scan does not need it anymore *)
-    roots = [];
-    lang = None;
+    tracing =
+      (match (!trace, !trace_endpoint) with
+      | true, Some url ->
+          let endpoint =
+            match url with
+            | "semgrep-prod" -> default_trace_endpoint
+            | "semgrep-dev" -> default_dev_endpoint
+            | "semgrep-local" -> default_local_endpoint
+            | _ -> Uri.of_string url
+          in
+          Some { endpoint; top_level_span = None }
+      | true, None ->
+          Some { endpoint = default_trace_endpoint; top_level_span = None }
+      | false, Some _ -> failwith "need both -trace and -trace_endpoint"
+      | false, None -> None);
   }
 
 (*****************************************************************************)
@@ -343,11 +372,6 @@ let all_actions (caps : Cap.all_caps) () =
         (Check_rule.check_files
            (caps :> < Cap.stdout ; Cap.fork ; Cap.alarm >)
            !output_format) );
-    (* this is run by some of our workflows (e.g., check-pro-rules.jsonnet) *)
-    ( "-test_rules",
-      " <files or dirs>",
-      Arg_.mk_action_n_conv Fpath.v
-        (Core_actions.test_rules (caps :> < Cap.stdout ; Cap.exit >)) );
     (* this is run by scripts (stats/.../run-lang) used by some of our workflows
      * (e.g., cron-parsing-stats.jsonnet)
      *)
@@ -360,7 +384,7 @@ let all_actions (caps : Cap.all_caps) () =
             ~json:
               (match !output_format with
               | Json _ -> true
-              | Text _
+              | Text
               | NoOutput ->
                   false)
             ~verbose:true xs) );
@@ -511,7 +535,7 @@ let options caps (actions : unit -> Arg_.cmdline_actions) =
       Arg.String (fun s -> rule_source := Some (Rule_file (Fpath.v s))),
       " <file> obtain formula of patterns from YAML/JSON/Jsonnet file" );
     ( "-targets",
-      Arg.String (fun s -> target_source := Some (Target_file (Fpath.v s))),
+      Arg.String (fun s -> target_file := Some (Fpath.v s)),
       " <file> obtain list of targets to run patterns on" );
     ( "-lang",
       Arg.String (fun s -> lang := Some (Xlang.of_string s)),
@@ -545,10 +569,6 @@ let options caps (actions : unit -> Arg_.cmdline_actions) =
           report_time := true),
       " report detailed matching times as part of the JSON response. Implies \
        '-json'." );
-    ( "-pvar",
-      Arg.String (fun s -> output_format := Text (String_.split ~sep:"," s)),
-      " <metavars> print the metavariables, not the matched code (imply TEXT \
-       format)" );
     ( "-fail_fast",
       Arg.Set Flag.fail_fast,
       " stop at first exception (and get a backtrace)" );
@@ -711,7 +731,7 @@ let main_exn (caps : Cap.all_caps) (argv : string array) : unit =
    * > ignoring SIGXFSZ, continued attempts to increase the size of a file
    * > beyond the limit will fail with errno set to EFBIG.
    *)
-  if Sys.unix then Sys.set_signal Sys.sigxfsz Sys.Signal_ignore;
+  if Sys.unix then CapSys.set_signal caps#signal Sys.sigxfsz Sys.Signal_ignore;
 
   let usage_msg =
     spf "Usage: %s [options] -rules <file> -targets <file>\nOptions:"
@@ -767,7 +787,7 @@ let main_exn (caps : Cap.all_caps) (argv : string array) : unit =
       (* --------------------------------------------------------- *)
       (* main entry *)
       (* --------------------------------------------------------- *)
-      | roots ->
+      | roots -> (
           let roots = Fpath_.of_strings roots in
           let config = mk_config () in
           Core_profiling.profiling := config.report_time;
@@ -778,11 +798,11 @@ let main_exn (caps : Cap.all_caps) (argv : string array) : unit =
               1)
             else config.ncores
           in
-          let target_source =
-            match (!target_source, !lang, roots) with
-            | Some x, None, [] -> Some x
+          let target_source : Core_scan_config.target_source =
+            match (!target_file, !lang, roots) with
+            | Some file, None, [] -> Target_file file
             | None, Some lang, [ file ] when UFile.is_file file ->
-                Some (Targets [ Target.mk_target lang file ])
+                Targets [ Target.mk_target lang file ]
             | _ ->
                 (* alt: use the file targeting in targets_of_config_DEPRECATED
                  * with the deprecated use of Find_targets_old, but better
@@ -794,6 +814,7 @@ let main_exn (caps : Cap.all_caps) (argv : string array) : unit =
                    and a single target file; if you need more complex file \
                    targeting use semgrep"
           in
+          let config = { config with target_source; ncores } in
 
           (* TODO: We used to tune the garbage collector but from profiling
              we found that the effect was small. Meanwhile, the memory
@@ -801,29 +822,32 @@ let main_exn (caps : Cap.all_caps) (argv : string array) : unit =
              tune these parameters in the future/do more testing, but
              for now just turn it off *)
           (* if !Flag.gc_tuning && config.max_memory_mb = 0 then set_gc (); *)
-          let run ?span_id () =
-            let config =
-              { config with target_source; ncores; top_level_span = span_id }
-            in
+          let run config =
             let res = Core_scan.scan (caps :> Core_scan.caps) config in
-            output_core_results (caps :> < Cap.stdout ; Cap.exit >) res config
+            output_core_results
+              (caps :> < Cap.stdout ; Cap.stderr ; Cap.exit >)
+              res config
           in
-
           (* Set up tracing and run it for the duration of scanning. Note that
              this will only trace `Core_command.run_conf` and the functions it
              calls.
              TODO when osemgrep is the default entry point, we will also be
              able to instrument the pre- and post-scan code in the same way.
           *)
-          if config.trace then (
-            let trace_data =
-              Trace_data.get_top_level_data config.ncores Version.version
-                (Trace_data.no_analysis_features ())
-            in
-            Tracing.configure_tracing "semgrep-oss";
-            Tracing.with_tracing "Core_command.semgrep_core_dispatch"
-              config.trace_endpoint trace_data (fun span_id -> run ~span_id ()))
-          else run ())
+          match config.tracing with
+          | None -> run config
+          | Some tracing ->
+              let trace_data =
+                Trace_data.get_top_level_data config.ncores Version.version
+                  (Trace_data.no_analysis_features ())
+              in
+              Tracing.configure_tracing "semgrep-oss";
+              Tracing.with_tracing "Core_command.semgrep_core_dispatch"
+                tracing.endpoint trace_data (fun span_id ->
+                  let tracing =
+                    { tracing with top_level_span = Some span_id }
+                  in
+                  run { config with tracing = Some tracing })))
 
 let with_exception_trace f =
   Printexc.record_backtrace true;

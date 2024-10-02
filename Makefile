@@ -222,7 +222,6 @@ build-core-test:
 core-test-e2e:
 	SEMGREP_CORE=$(PWD)/bin/semgrep-core$(EXE) \
 	$(MAKE) -C interfaces/semgrep_interfaces test
-	python3 tests/semgrep-core-e2e/test_target_file.py
 
 ###############################################################################
 # External dependencies installation targets
@@ -514,10 +513,6 @@ gitclean:
 .PHONY: release
 release:
 	./scripts/release/bump
-
-.PHONY: update_semgrep_rules
-update_semgrep_rules:
-	cd tests/semgrep-rules; git checkout origin/develop
 
 # Run utop with all the semgrep-core libraries loaded.
 .PHONY: utop

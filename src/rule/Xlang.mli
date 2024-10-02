@@ -26,11 +26,14 @@ type t =
   (* semgrep-like pattern matching *)
   | LSpacegrep
   | LAliengrep
-[@@deriving show, eq, hash]
+[@@deriving show, eq, hash, yojson]
 
 exception InternalInvalidLanguage of string (* rule id *) * string (* msg *)
 
 val of_lang : Lang.t -> t
+
+(* Returns a lang or an Error with an error message *)
+val to_lang : t -> (Lang.t, string) Result.t
 
 (* raises an exception with error message *)
 val to_lang_exn : t -> Lang.t

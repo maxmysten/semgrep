@@ -211,6 +211,7 @@ let remove_blank_prefix (x : string wrap) : string wrap =
 
 type ellipsis_or_bash =
   | Semgrep_ellipsis of tok
+  | Semgrep_named_ellipsis of string wrap
   | Bash of AST_bash.blist option
 
 (* A plain ellipsis such as '...' (not e.g. '...;') is identified so
@@ -221,7 +222,18 @@ type ellipsis_or_bash =
    grammar.
 *)
 let is_plain_ellipsis =
-  let rex = Pcre2_.regexp "\\A[ \t\r\n]*[.]{3}[ \t\r\n]*\\z" in
+  let rex = Pcre2_.regexp {|\A[ \t\r\n]*[.]{3}[ \t\r\n]*\z|} in
+  fun s ->
+    match Pcre2_.pmatch ~rex s with
+    | Ok res -> res
+    | Error _err -> false
+
+(* A named ellipsis such as '$...ARGS'.
+   See remarks for 'is_plain_ellipsis'. *)
+let is_named_ellipsis =
+  let rex =
+    Pcre2_.regexp {|\A[ \t\r\n]*(\$[.]{3}[A-Z_][A-Z_0-9]*)[ \t\r\n]*\z|}
+  in
   fun s ->
     match Pcre2_.pmatch ~rex s with
     | Ok res -> res
@@ -236,16 +248,18 @@ let shift_locations (str, tok) =
 
 let parse_bash (env : env) shell_cmd : ellipsis_or_bash =
   let input_kind, _ = env.extra in
+  let contents, tok = shell_cmd in
   match input_kind with
-  | Pattern when is_plain_ellipsis (fst shell_cmd) ->
-      Semgrep_ellipsis (snd shell_cmd)
+  | Pattern when is_plain_ellipsis contents -> Semgrep_ellipsis (snd shell_cmd)
+  | Pattern when is_named_ellipsis contents ->
+      Semgrep_named_ellipsis (String.trim contents, tok)
   | _ ->
       let ts_res =
         H.wrap_parser
           (fun () ->
             let str = shift_locations shell_cmd in
             Tree_sitter_bash.Parse.string str)
-          (fun cst ->
+          (fun cst _extras ->
             let bash_env : Parse_bash_tree_sitter.env =
               { env with extra = input_kind }
             in
@@ -820,6 +834,7 @@ let shell_command (env : env) (x : CST.shell_command) =
       | Sh -> (
           match parse_bash env raw_shell_code with
           | Semgrep_ellipsis tok -> Command_semgrep_ellipsis tok
+          | Semgrep_named_ellipsis x -> Command_semgrep_named_ellipsis x
           | Bash (Some bash_program) ->
               let loc = wrap_loc raw_shell_code in
               Sh_command (loc, bash_program)
@@ -1177,7 +1192,7 @@ let parse file =
     (fun () ->
       let contents = UFile.read_file file |> ensure_trailing_newline in
       Tree_sitter_dockerfile.Parse.string ~src_file:!!file contents)
-    (fun cst ->
+    (fun cst _extras ->
       let env =
         {
           H.file;
@@ -1192,7 +1207,7 @@ let parse_pattern str =
   H.wrap_parser
     (fun () ->
       str |> ensure_trailing_newline |> Tree_sitter_dockerfile.Parse.string)
-    (fun cst ->
+    (fun cst _extras ->
       let file = Fpath.v "<pattern>" in
       let env =
         {

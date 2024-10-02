@@ -663,7 +663,8 @@ let tainting_test (lang : Lang.t) (rules_file : Fpath.t) (file : Fpath.t) =
                details = None;
              })
   in
-  let expected = TCM.expected_error_lines_of_files [ file ] in
+  let regexp = ".*\\b\\(ruleid\\|todook\\):.*" in
+  let expected = TCM.expected_error_lines_of_files ~regexp [ file ] in
   TCM.compare_actual_to_expected_for_alcotest
     ~to_location:TCM.location_of_core_error actual expected
 
@@ -794,12 +795,15 @@ let mark_todo_js (test : Testo.t) =
   | _ -> test
 
 (* quite similar to full_rule_regression_tests but prefer to pack_tests
- * with "full semgrep rule Java", so one can just run the Java tests
+ * with "semgrep-rules repo Java", so one can just run the Java tests
  * with ./test Java
  * alt: do like in semgrep-pro and call the toplevel engine
  * in a Unit_runner.ml instead of using Test_engine.make_tests
+ * TODO: get rid of this and rely on `osemgrep test` code instead of
+ * Test_engine.make_tests as they differ sligltly and we're using
+ * osemgrep test in the semgrep-rules repo CI, not -test_rules.
  *)
-let full_rule_semgrep_rules_regression_tests () =
+let semgrep_rules_repo_tests () : Testo.t list =
   let path = tests_path / "semgrep-rules" in
   let tests = Test_engine.make_tests [ path ] in
   let groups =
@@ -808,37 +812,24 @@ let full_rule_semgrep_rules_regression_tests () =
            let test = mark_todo_js test in
            let group_opt =
              match test.name with
-             (* TODO: cleanup nodejsscan? "no target for" error *)
+             (* note that there is no need to filter rules without targets; This
+              * is now handled in Test_engine.make_tests which will generate
+              * an XFAIL Testo test for those.
+              *)
              | s
-               when s =~ ".*/contrib/nodejsscan/xss_serialize_js.yaml"
-                    || s =~ ".*/contrib/nodejsscan/xss_mustache_escape.yaml"
-                    || s
-                       =~ ".*/contrib/nodejsscan/xml_entity_expansion_dos.yaml"
-                    || s =~ ".*/contrib/nodejsscan/timing_attack_node.yaml"
-                    || s =~ ".*/contrib/nodejsscan/sql_injection.yaml"
-                    || s =~ ".*/contrib/nodejsscan/security_electronjs.yaml"
-                    || s =~ ".*/contrib/nodejsscan/resolve_path_traversal.yaml"
-                    || s =~ ".*/contrib/nodejsscan/regex_injection.yaml"
-                    || s =~ ".*/contrib/nodejsscan/logic_bypass.yaml"
-                    || s =~ ".*/contrib/nodejsscan/jwt_hardcoded.yaml"
-                    || s =~ ".*/contrib/nodejsscan/jwt_express_hardcoded.yaml"
-                    || s =~ ".*/contrib/nodejsscan/good_ratelimiting.yaml"
-                    || s =~ ".*/contrib/nodejsscan/good_helmet_checks.yaml"
-                    || s =~ ".*/contrib/nodejsscan/good_anti_csrf.yaml"
-                    || s =~ ".*/contrib/nodejsscan/eval_drpc_deserialize.yaml"
-                    || s =~ ".*/contrib/nodejsscan/error_disclosure.yaml"
-                    (* TODO: cleanup semgrep-rules: "no target for" error *)
-                    (* TODO: do this filtering before Test_engine.make_tests
-                       because it already requires the target files. *)
-                    || s =~ ".*/contrib/dlint/dlint-equivalent.yaml"
-                    || s =~ ".*/fingerprints/fingerprints.yaml"
-                    || s
-                       =~ ".*/terraform/aws/security/aws-fsx-lustre-files-ystem.yaml"
-                    || s =~ ".*/generic/ci/audit/changed-semgrepignore.*"
-                    (* TODO: parse error, weird *)
-                    || s =~ ".*/unicode/security/bidi.yml"
-                    || s
-                       =~ ".*/python/django/maintainability/duplicate-path-assignment.yaml"
+               when (* TODO: we're skipping those rules because e.g. for bidy.yml
+                       we're using a languages: [bash,c, ..., python] and a
+                       bidy.py target file which cause Test_engine.make_test to
+                       parse bidy.py with a bash parser (the first one in the
+                       list) which then cause a parse error. (py|o)semgrep test
+                       do not have the issue because they use the extension of
+                       the file to decide which language to use instead of what
+                       is in the rule
+                    *)
+                    s =~ ".*/unicode/security/bidi.yml"
+                    || s =~ ".*/dockerfile/security/dockerd-socket-mount.yaml"
+                    (* Elixir requires Pro *)
+                    || s =~ ".*/elixir/lang/.*"
                     (* Apex requires Pro *)
                     || s =~ ".*/apex/lang/.*"
                        (* but the following are generic rules ... *)
@@ -854,8 +845,6 @@ let full_rule_semgrep_rules_regression_tests () =
                           <> "tests/semgrep-rules/apex/lang/performance/ncino/operationsInLoops/AvoidOperationsWithLimitsInLoops.yaml"
                        && s
                           <> "tests/semgrep-rules/apex/lang/security/ncino/dml/ApexCSRFStaticConstructor.yaml"
-                    (* Elixir requires Pro *)
-                    || s =~ ".*/elixir/lang/.*"
                     (* ?? *)
                     || s =~ ".*/yaml/semgrep/consistency/.*" ->
                  Some "XFAIL"
@@ -863,7 +852,6 @@ let full_rule_semgrep_rules_regression_tests () =
              | s when s =~ ".*.test.yml" -> None
              (* not languages tests *)
              | s when s =~ ".*/semgrep-rules/stats/" -> None
-             | s when s =~ ".*/semgrep-rules/tests/" -> None
              (* ok let's keep all the other one with the appropriate group name *)
              | s when s =~ ".*/semgrep-rules/\\([a-zA-Z]+\\)/.*" ->
                  (* This is confusing because it looks like a programming
@@ -881,7 +869,7 @@ let full_rule_semgrep_rules_regression_tests () =
     |> Assoc.group_assoc_bykey_eff
   in
 
-  Testo.categorize_suites "full semgrep rule"
+  Testo.categorize_suites "semgrep-rules repo"
     (groups
     |> List_.map (fun (group, tests) ->
            tests
@@ -914,5 +902,5 @@ let tests () =
       maturity_tests ();
       full_rule_taint_maturity_tests ();
       full_rule_regression_tests ();
-      full_rule_semgrep_rules_regression_tests ();
+      semgrep_rules_repo_tests ();
     ]

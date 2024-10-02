@@ -151,7 +151,7 @@ let per_rule_boilerplate_fn (timeout : timeout_config option) =
             raise (File_timeout !rule_timeouts)
         | _else_ -> ());
         let loc = Tok.first_loc_of_file file in
-        let error = E.mk_error ~rule_id:(Some rule_id) loc OutJ.Timeout in
+        let error = E.mk_error ~rule_id loc OutJ.Timeout in
         RP.mk_match_result []
           (Core_error.ErrorSet.singleton error)
           (Core_profiling.empty_rule_profiling rule)
@@ -230,10 +230,11 @@ let check
            per_rule_boilerplate_fn
              (r :> R.rule)
              (fun () ->
-               Logs_.with_debug_trace "Match_rules.check_rule" (fun () ->
-                   Log.debug (fun m ->
-                       m "target: %s, ruleid: %s" !!file
-                         (r.id |> fst |> Rule_ID.to_string));
+               Logs_.with_debug_trace ~__FUNCTION__
+                 ~pp_input:(fun _ ->
+                   "target: " ^ !!file ^ "\nruleid: "
+                   ^ (r.id |> fst |> Rule_ID.to_string))
+                 (fun () ->
                    (* dispatching *)
                    match r.R.mode with
                    | `Search _ as mode ->

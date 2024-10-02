@@ -1784,7 +1784,7 @@ and map_field_declaration (env : env) (x : CST.field_declaration) : G.field =
       G.fld (ent, G.FieldDefColon var_def)
   | `Ellips v1 ->
       let t = token env v1 in
-      G.fieldEllipsis t
+      G.field_ellipsis t
 
 (* for struct definition *)
 and map_field_declaration_list (env : env)
@@ -3467,7 +3467,7 @@ and map_declaration_statement_bis (env : env) outer_attrs (*_visibility*) x :
       let _where_clauseTODO = Option.map (fun x -> map_where_clause env x) v6 in
       let body = map_decls_or_semi env v7 in
       (* TODO not sure what to put for the name *)
-      let ent = G.basic_entity ~attrs ~tparams impl in
+      let ent = G.basic_entity ~attrs ?tparams impl in
       let def = G.OtherDef (("Impl", snd impl), [ G.T ty; G.Ss body ]) in
       [ G.DefStmt (ent, def) |> G.s ]
   | `Trait_item (_v0TODO, v1, v2, v3, v4, v5, v6, v7) ->
@@ -3633,7 +3633,7 @@ let map_source_file (env : env) (x : CST.source_file) : G.any =
 let parse file =
   H.wrap_parser
     (fun () -> Tree_sitter_rust.Parse.file !!file)
-    (fun cst ->
+    (fun cst _extras ->
       let env = { H.file; conv = H.line_col_to_pos file; extra = Target } in
       match map_source_file env cst with
       | G.Pr xs -> xs
@@ -3656,7 +3656,7 @@ let parse_expression_or_source_file str =
 let parse_pattern str =
   H.wrap_parser
     (fun () -> parse_expression_or_source_file str)
-    (fun cst ->
+    (fun cst _extras ->
       let file = Fpath.v "<pattern>" in
       let env =
         { H.file; conv = H.line_col_to_pos_pattern str; extra = Pattern }

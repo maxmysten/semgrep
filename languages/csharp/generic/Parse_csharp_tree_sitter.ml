@@ -961,14 +961,12 @@ and type_parameter (env : env) ((v1, v2, v3) : CST.type_parameter) :
   let v1 = List.concat_map (attribute_list env) v1 in
   let v2 =
     match v2 with
-    | Some x -> (
-        match x with
-        | `In tok -> Some (Contravariant, token env tok) (* "in" *)
-        | `Out tok -> Some (Covariant, token env tok) (* "out" *))
+    | Some (`In tok) -> Some (Contravariant, token env tok) (* "in" *)
+    | Some (`Out tok) -> Some (Covariant, token env tok) (* "out" *)
     | None -> None
   in
   let v3 = identifier env v3 (* identifier *) in
-  G.tparam_of_id v3 ~tp_attrs:v1 ~tp_variance:v2
+  G.tparam_of_id v3 ~tp_attrs:v1 ?tp_variance:v2
 
 and element_binding_expression (env : env) (x : CST.element_binding_expression)
     =
@@ -2062,7 +2060,7 @@ and catch_declaration (env : env) ((v1, v2, v3, v4) : CST.catch_declaration) :
   let v2 = type_pattern env v2 in
   let v3 = Option.map (identifier env) v3 (* identifier *) in
   let _v4 = token env v4 (* ")" *) in
-  CatchParam (G.param_of_type v2 ~pname:v3)
+  CatchParam (G.param_of_type v2 ?pname:v3)
 
 and case_pattern_switch_label (env : env)
     ((v1, v2, v3, v4) : CST.case_pattern_switch_label) =
@@ -3376,7 +3374,7 @@ and declaration (env : env) (x : CST.declaration) : stmt =
 let parse file =
   H.wrap_parser
     (fun () -> Tree_sitter_c_sharp.Parse.file !!file)
-    (fun cst ->
+    (fun cst _extras ->
       let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
       match compilation_unit env cst with
       | G.Pr xs -> xs
@@ -3398,7 +3396,7 @@ let parse_pattern_aux str =
 let parse_pattern str =
   H.wrap_parser
     (fun () -> parse_pattern_aux str)
-    (fun cst ->
+    (fun cst _extras ->
       let file = Fpath.v "<pattern>" in
       let env = { H.file; conv = H.line_col_to_pos_pattern str; extra = () } in
       compilation_unit env cst)

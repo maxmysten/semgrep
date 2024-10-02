@@ -1,3 +1,6 @@
+(* = Cap.stdout + Core_scan.caps *)
+type caps = < Cap.stdout ; Cap.fork ; Cap.alarm >
+
 (*
    Parse a semgrep-test command, execute it and exit.
 
@@ -5,10 +8,12 @@
 
    This function returns an exit code to be passed to the 'exit' function.
 *)
-val main : < Cap.stdout ; Cap.network ; Cap.tmp > -> string array -> Exit_code.t
+val main : caps -> string array -> Exit_code.t
 
-(* called from main() but also from Scan_subcommand.ml to manage the legacy
- * way to show things (e.g., 'semgrep scan --tests <dir>')
+(* called from main() above but also from Scan_subcommand.ml to manage the
+ * legacy way to test things (e.g., 'semgrep scan --tests <dir>')
  *)
-val run_conf :
-  < Cap.stdout ; Cap.network ; Cap.tmp > -> Test_CLI.conf -> Exit_code.t
+val run_conf : caps -> Test_CLI.conf -> Exit_code.t
+
+(* pro hooks *)
+val hook_pro_init : (unit -> unit) ref

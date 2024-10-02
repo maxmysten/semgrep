@@ -24,13 +24,6 @@ local version = '${{ github.event.inputs.semgrep-version }}';
 // and can be referenced from other jobs.
 local pr_number = '"${{ needs.release-setup.outputs.pr-number }}"';
 
-// For towncrier setup in scripts/release/
-//TODO: was using pip3 before, and pipenv_install_step is using pip, an issue?
-local pipenv_setup = |||
-  %s
-  pipenv install --dev
-||| % actions.pipenv_install_step.run;
-
 // ----------------------------------------------------------------------------
 // Input
 // ----------------------------------------------------------------------------
@@ -40,7 +33,7 @@ local input = {
   inputs: {
     'semgrep-version': {
       type: 'string',
-      description: 'This is the version that is about to be released and should be what the previous version bump step set the OSS version to in the previous step. This is only really required as a safety check, failing to get the version correct here will only cause this step to fail and should not break anything.',
+      description: 'This is the version that is about to be released and should be what the previous version bump step set the OSS version to in the previous step. This is only really required as a safety check, failing to get the version correct here will only cause this step to fail and should not break anything. For example: "1.42.0"',
       required: true,
     },
     'dry-run': {
@@ -182,6 +175,8 @@ local check_semgrep_pro_job = {
   },
 };
 
+local release_branch = 'release-%s' % version;
+
 // make the Release PR
 local release_setup_job = {
   needs: [
@@ -194,6 +189,7 @@ local release_setup_job = {
     'pr-number': '${{ steps.open-pr.outputs.pr-number }}',
   },
   env: {
+    BRANCH: release_branch,
     VERSION: version,
   },
   // TODO: again why we need this token? we release from
@@ -208,63 +204,22 @@ local release_setup_job = {
       },
     },
     {
-      run: 'git checkout -b "release-${VERSION}"',
-    },
-    {
-      env: {
-        SEMGREP_RELEASE_NEXT_VERSION: version,
-      },
-      run: 'make release',
-    },
-    // for towncrier, TODO reuse actions.setup_python
-    {
-      uses: 'actions/setup-python@v4',
-      with: {
-        'python-version': '3.10',
-        cache: 'pipenv',
-        'cache-dependency-path': 'scripts/release/Pipfile.lock',
-      },
-    },
-    {
-      name: 'Create GitHub Release Body',
-      'working-directory': 'scripts/release',
-      run: |||
-        %s
-        pipenv run towncrier build --draft --version $VERSION > release_body.txt
-      ||| % pipenv_setup,
-    } + unless_dry_run,
-    {
-      name: 'Upload Changelog Body Artifact',
-      uses: 'actions/upload-artifact@v3',
-      with: {
-        name: 'release_body_%s' % version,
-        path: 'scripts/release/release_body.txt',
-      },
-    } + unless_dry_run,
-    {
-      name: 'Update Changelog',
-      'working-directory': 'scripts/release',
-      // use || true below since modifications mean exit code != 0
-      run: |||
-        %s
-        pipenv run towncrier build --yes --version $VERSION
-        pipenv run pre-commit run --files ../../CHANGELOG.md --config ../../.pre-commit-config.yaml || true
-      ||| % pipenv_setup,
+      run: 'git checkout -b "${BRANCH}"'
     },
     {
       name: 'Push release branch',
       run: |||
         %s
         git add --all
-        git commit -m "chore: Bump version to ${VERSION}"
-        git push --set-upstream origin release-${VERSION}
+        git commit --allow-empty -m "chore: release version ${VERSION}"
+        git push --set-upstream origin ${BRANCH}
       ||| % gha.git_config_user,
     } + unless_dry_run,
     {
       name: 'Create PR',
       id: 'open-pr',
       env: {
-        SOURCE: 'release-%s' % version,
+        SOURCE: release_branch,
         TARGET: '${{ github.event.repository.default_branch }}',
         TITLE: 'Release Version %s' % version,
         GITHUB_TOKEN: semgrep.github_bot.token_ref,
@@ -335,7 +290,7 @@ local create_tag_job = {
       with: {
         submodules: true,
         // checkout the release branch this time
-        ref: 'release-%s' % version,
+        ref: release_branch,
         token: semgrep.github_bot.token_ref,
       },
     },
@@ -375,12 +330,16 @@ local create_draft_release_job = {
     'wait-for-pr-checks',
   ],
   steps: semgrep.github_bot.get_token_steps + [
+    // TODO I (Andre) couldn't figure out how to save the
+    // release_changes.md as an asset in one workflow and download in
+    // another. I am sure it is possible, but it isn't easy.  Instead
+    // I just made an additional file contained in the repo called
+    // OSS/release_changes.md .
     {
-      name: 'Download Release Body Artifact',
-      uses: 'actions/download-artifact@v3',
+      uses: 'actions/checkout@v3',
       with: {
-        name: 'release_body_%s' % version,
-        path: 'scripts/release',
+        ref: release_branch,
+        token: semgrep.github_bot.token_ref,
       },
     },
     {
@@ -389,7 +348,8 @@ local create_draft_release_job = {
       with: {
         tag_name: 'v%s' % version,
         name: 'Release v%s' % version,
-        body_path: 'scripts/release/release_body.txt',
+        body_path: 'release_changes.md',
+	// Why not use the semgrep.github_bot.token_ref?
         token: '${{ secrets.GITHUB_TOKEN }}',
         prerelease: false,
         draft: true,
@@ -401,7 +361,7 @@ local create_draft_release_job = {
       with: {
         tag_name: 'v%s' % version,
         name: 'Release v%s' % version,
-        body_path: 'scripts/release/release_body.txt',
+        body_path: 'release_changes.md',
         token: semgrep.github_bot.token_ref,
         prerelease: false,
         draft: true,
@@ -468,11 +428,11 @@ local notify_success_job = {
     'bump-semgrep-intellij',
   ],
   'runs-on': 'ubuntu-20.04',
+  env: {
+    VERSION: version,
+  },
   steps: [
     {
-      env: {
-	VERSION: version
-      },
       run: 'echo "${VERSION}"',
     },
     {
@@ -491,10 +451,7 @@ local notify_success_job = {
     },
     {
       name: 'Notify Success on Slack',
-      env: {
-        VERSION: version
-      },
-      run: semgrep.slack.curl_notify('Release Validation for ${VERSION} has succeeded! Please review the PRs in semgrep-app, semgrep-rpc, and semgrep-action that were generated by this workflow.'),
+      run: semgrep.slack.curl_notify("Release Validation for ${VERSION} has succeeded! Please review the PRs in semgrep-app, semgrep-rpc, and semgrep-action that were generated by this workflow."),
     },
   ],
 };
@@ -527,7 +484,7 @@ local notify_success_job = {
     'notify-success': notify_success_job,
     'notify-failure':
       semgrep.slack.notify_failure_job(
-        'Release Validation has failed for version ${VERSION}. Please see https://github.com/${{github.repository}}/actions/runs/${{github.run_id}} for more details!'
+        "Release Validation has failed for version ${VERSION}. Please see https://github.com/${{github.repository}}/actions/runs/${{github.run_id}} for more details!"
          ) + {
          env: {
 	  VERSION: version

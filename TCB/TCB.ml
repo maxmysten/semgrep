@@ -483,13 +483,13 @@ type nonrec ('a, 'b) result = ('a, 'b) result
 (* Format (see also Format module) *)
 (**************************************************************************)
 
-(*
 type ('a, 'b, 'c, 'd, 'e, 'f) format6 =
   ('a, 'b, 'c, 'd, 'e, 'f) CamlinternalFormatBasics.format6
 
 type ('a, 'b, 'c, 'd) format4 = ('a, 'b, 'c, 'c, 'c, 'd) format6
 type ('a, 'b, 'c) format = ('a, 'b, 'c, 'c) format4
 
+(*
 let string_of_format = string_of_format
 
 external format_of_string :
@@ -653,6 +653,15 @@ module Sys = struct
     | Signal_handle of (int -> unit)
 
   (* LATER? create different capabilities for each signal? *)
+  (* ref: https://faculty.cs.niu.edu/~hutchins/csci480/signals.htm *)
+  let sighup = Sys.sighup
+  let sigquit = Sys.sigquit
+
+  (* Usually paging errors...  *)
+  let sigbus = Sys.sigbus
+  let sigpipe = Sys.sigpipe
+  let sigterm = Sys.sigterm
+  let sigsys = Sys.sigsys
   let sigalrm = Sys.sigalrm
   let sigxfsz = Sys.sigxfsz
   let sigint = Sys.sigint

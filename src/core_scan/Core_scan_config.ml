@@ -1,9 +1,6 @@
 (* LATER: osemgrep: not needed after osemgrep migration done *)
 type output_format =
-  (* The mvars are from semgrep-core -pvars to print info on the
-   * matched variables instead of the matched content.
-   *)
-  | Text of Metavariable.mvar list
+  | Text
   (* In JSON mode, we might need to display intermediate '.' in the
    * output for pysemgrep to track progress as well as extra targets
    * found by extract-mode rules, hence the bool below.
@@ -38,16 +35,16 @@ type target_source = Target_file of Fpath.t | Targets of Target.t list
 type t = {
   (* Main flags, input *)
   rule_source : rule_source;
-  target_source : target_source option;
-  (* TODO: remove roots and lang, and once removed remove the option above *)
-  roots : Scanning_root.t list;
-  lang : Xlang.t option;
+  target_source : target_source;
   equivalences_file : Fpath.t option;
   (* output and result tweaking *)
   output_format : output_format;
   report_time : bool;
   matching_explanations : bool;
   strict : bool;
+  (* respect or not the paths: directive in a rule. Useful to set to false
+   * in a testing context as in `semgrep test`
+   *)
   respect_rule_paths : bool;
   (* Hook to display match results incrementally, after a file has been fully
    * processed. Note that this hook run in a child process of Parmap
@@ -65,11 +62,8 @@ type t = {
   ncores : int;
   (* a.k.a -fast (on by default) *)
   filter_irrelevant_rules : bool;
-  (* debugging and telemetry flags *)
-  trace : bool;
-  trace_endpoint : string option;
-  (* To add data to our opentelemetry top span, so easier to filter *)
-  top_level_span : Tracing.span option;
+  (* telemetry *)
+  tracing : Tracing.config option;
 }
 [@@deriving show]
 
@@ -88,10 +82,10 @@ let default =
   {
     (* Main flags *)
     rule_source = Rules [];
-    target_source = None;
+    target_source = Targets [];
     equivalences_file = None;
     (* alt: NoOutput but then would need a -text in Core_CLI.ml *)
-    output_format = Text [];
+    output_format = Text;
     report_time = false;
     matching_explanations = false;
     strict = false;
@@ -108,10 +102,5 @@ let default =
     (* a.k.a -fast, on by default *)
     filter_irrelevant_rules = true;
     (* debugging and telemetry flags *)
-    trace = false;
-    trace_endpoint = None;
-    top_level_span = None;
-    (* TODO: deprecated, remove *)
-    roots = [];
-    lang = None;
+    tracing = None;
   }

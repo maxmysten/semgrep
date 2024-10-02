@@ -1,9 +1,9 @@
 (* src: harrop article on fork-based parallelism
- * returns a futur
+ * returns a promise.
  * old: was called invoke() and was in pfff/commons/parallel.ml
  * related work: my pfff/commons/distribution.ml
  *)
-let apply_in_child_process (caps : < Cap.fork >) f x =
+let apply_in_child_process_promise (caps : < Cap.fork >) ?(flags = []) f x =
   let input, output = UUnix.pipe () in
   match CapUnix.fork caps#fork () with
   (* error, could not create process, well compute now then *)
@@ -17,7 +17,7 @@ let apply_in_child_process (caps : < Cap.fork >) f x =
       UMarshal.to_channel output
         (try `Res (f x) with
         | e -> `Exn e)
-        [];
+        flags;
       close_out output;
       (* nosemgrep: forbid-exit *)
       UStdlib.exit 0
@@ -27,7 +27,9 @@ let apply_in_child_process (caps : < Cap.fork >) f x =
       let input = UUnix.in_channel_of_descr input in
       fun () ->
         let v = UMarshal.from_channel input in
-        ignore (UUnix.waitpid [] pid);
+        (* Without 'WNOHANG', in macOS the 'waitpid' call may fail with 'EINTR',
+         * not 100% sure why. *)
+        ignore UUnix.(waitpid [ WNOHANG ] pid);
         close_in input;
         match v with
         | `Res x -> x
@@ -45,3 +47,6 @@ let apply_in_child_process (caps : < Cap.fork >) f x =
              * so better to use Printexc.to_string and return that.
              *)
             raise e)
+
+let apply_in_child_process (caps : < Cap.fork >) ?flags f x =
+  apply_in_child_process_promise caps ?flags f x ()

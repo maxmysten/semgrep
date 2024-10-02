@@ -25,19 +25,17 @@ module OutJ = Semgrep_output_v1_j
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
-(* This module allows to use semgrep-core -test_rules <files_or_dirs>
+(* !!!This module is deprecated!!!
+ *
+ * It used to allow to use semgrep-core -test_rules <files_or_dirs>
  * to automatically run all the semgrep rules in yaml files or directories
  * and make sure they match correctly (as specified by the special 'ruleid:'
- * comment in it).
- *
- * This is also now used for regression testing as part of 'make test' in
+ * comment in it), but now you should use osemgrep test instead.
+ * This is also used for regression testing as part of 'make test' in
  * semgrep-core. See Unit_engine.full_rule_semgrep_rules_regression_tests().
  *
- * This module provides a service similar to what semgrep --test provides,
- * but without requiring the Python wrapper. It is also significantly
- * faster than semgrep --test.
- *
- * LATER: merge with osemgrep Test_subcommand.ml
+ * TODO: get rid of this module, switch everything to use `osemgrep test`
+ * code path.
  *)
 
 (*****************************************************************************)
@@ -202,7 +200,9 @@ let read_rules_file ~get_xlang ?fail_callback rule_file =
   | Ok rules ->
       let xlang = get_xlang rule_file rules in
       let target = find_target_of_yaml_file rule_file in
-      Logs.info (fun m -> m "processing target %s" !!target);
+      Logs.info (fun m ->
+          m "processing target %s (with xlang %s)" !!target
+            (Xlang.to_string xlang));
 
       (* ugly: this is just for tests/rules/inception2.yaml, to use JSON
          to parse the pattern but YAML to parse the target *)
@@ -219,7 +219,7 @@ let make_test_rule_file ?(fail_callback = fun _i m -> Alcotest.fail m)
     ?(get_xlang = single_xlang_from_rules) ?(prepend_lang = false)
     (rule_file : Fpath.t) : Testo.t =
   let test () =
-    Logs.info (fun m -> m "processing rule file %s" !!rule_file);
+    Logs.info (fun m -> m "processing rules  %s" !!rule_file);
     match read_rules_file ~get_xlang ~fail_callback rule_file with
     | None -> ()
     | Some (rules, target, xlang) -> (
@@ -253,7 +253,7 @@ let make_test_rule_file ?(fail_callback = fun _i m -> Alcotest.fail m)
                 (spf "exn on %s (exn = %s)" !!rule_file (Common.exn_to_s exn))
         in
         check_can_marshall rule_file res;
-        check_parse_errors rule_file res.errors;
+        check_parse_errors target res.errors;
 
         (* optionally do autofix tests if *)
         Test_utils.compare_fixes ~file:target res.matches;

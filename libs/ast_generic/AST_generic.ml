@@ -590,6 +590,17 @@ and qualifier =
 (*****************************************************************************)
 and id_info = {
   id_resolved : resolved_name option ref;
+  (* List of alternative names, populated when there are multiple
+     candidates available (not including `id_resolved` itself) for the
+     identifier (e.g., resolving virtual fields of the interface in
+     Java); otherwise, it remains empty.
+
+     TODO We could merge `id_resolved` and `id_resolved_alternatives`.
+     Keeping them separate might help distinguish a preferred name
+     from other possible candidates. However, since we currently don’t
+     have any features that prioritize findings based on probability,
+     this distinction isn’t particularly useful at the moment. *)
+  id_resolved_alternatives : resolved_name list ref;
   (* variable tagger (naming) *)
   (* sgrep: in OCaml we also use that to store the type of
    * a typed entity, which can be interpreted as a TypedMetavar in semgrep.
@@ -1149,7 +1160,8 @@ and xml_attribute =
 and a_xml_attr_value = expr
 
 and xml_body =
-  (* sgrep-ext: can contain "...". The string can also contain multiple lines *)
+  (* sgrep-ext: can contain "...". The string can also contain multiple
+     lines and so-called entities such as "&lt;" *)
   | XmlText of string wrap
   (* this can be None when people abuse {} to put comments in it *)
   | XmlExpr of expr option bracket
@@ -2248,6 +2260,7 @@ let empty_id_info ?(hidden = false) ?(case_insensitive = false)
     ?(id = id_info_id ()) () =
   {
     id_resolved = ref None;
+    id_resolved_alternatives = ref [];
     id_type = ref None;
     id_svalue = ref None;
     id_flags = ref (IdFlags.make ~hidden ~case_insensitive ~final:false);
@@ -2271,7 +2284,7 @@ let canonical_to_dotted tid xs = xs |> List_.map (fun s -> (s, tid))
 (* ------------------------------------------------------------------------- *)
 
 (* alt: could use @@deriving make *)
-let basic_entity ?hidden ?case_insensitive ?(attrs = []) ?(tparams = None) id =
+let basic_entity ?hidden ?case_insensitive ?(attrs = []) ?tparams id =
   let idinfo = empty_id_info ?hidden ?case_insensitive () in
   { name = EN (Id (id, idinfo)); attrs; tparams }
 
@@ -2336,7 +2349,7 @@ let raw x = RawExpr x |> e
 (* ------------------------------------------------------------------------- *)
 
 (* alt: could use @@deriving make *)
-let param_of_id ?(pattrs = []) ?(ptype = None) ?(pdefault = None) id =
+let param_of_id ?(pattrs = []) ?ptype ?pdefault id =
   {
     pname = Some id;
     pdefault;
@@ -2345,7 +2358,7 @@ let param_of_id ?(pattrs = []) ?(ptype = None) ?(pdefault = None) id =
     pinfo = basic_id_info (Parameter, SId.unsafe_default);
   }
 
-let param_of_type ?(pattrs = []) ?(pdefault = None) ?(pname = None) typ =
+let param_of_type ?(pattrs = []) ?pdefault ?pname typ =
   {
     ptype = Some typ;
     pname;
@@ -2365,8 +2378,8 @@ let ty_builtin id = TyN (Id (id, empty_id_info ())) |> t
 (* ------------------------------------------------------------------------- *)
 (* Type parameters *)
 (* ------------------------------------------------------------------------- *)
-let tparam_of_id ?(tp_attrs = []) ?(tp_variance = None) ?(tp_bounds = [])
-    ?(tp_default = None) tp_id =
+let tparam_of_id ?(tp_attrs = []) ?tp_variance ?(tp_bounds = []) ?tp_default
+    tp_id =
   TP { tp_id; tp_attrs; tp_variance; tp_bounds; tp_default }
 
 (* ------------------------------------------------------------------------- *)
@@ -2406,7 +2419,7 @@ let basic_field ?(vtok = no_sc) id vopt typeopt =
   let entity = basic_entity id in
   fld (entity, VarDef { vinit = vopt; vtype = typeopt; vtok })
 
-let fieldEllipsis t = F (exprstmt (e (Ellipsis t)))
+let field_ellipsis t = F (exprstmt (e (Ellipsis t)))
 
 (* ------------------------------------------------------------------------- *)
 (* Attributes *)
@@ -2422,7 +2435,7 @@ let unhandled_keywordattr (s, t) =
 (* Patterns *)
 (* ------------------------------------------------------------------------- *)
 
-let case_of_pat_and_expr ?(tok = None) (pat, expr) =
+let case_of_pat_and_expr ?tok (pat, expr) =
   let tok =
     match tok with
     | None -> fake "case"
@@ -2430,7 +2443,7 @@ let case_of_pat_and_expr ?(tok = None) (pat, expr) =
   in
   CasesAndBody ([ Case (tok, pat) ], exprstmt expr)
 
-let case_of_pat_and_stmt ?(tok = None) (pat, stmt) =
+let case_of_pat_and_stmt ?tok (pat, stmt) =
   let tok =
     match tok with
     | None -> fake "case"

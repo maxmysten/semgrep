@@ -59,7 +59,7 @@ let empty_stmt env t =
 let todo_deprecation_stmt = G.Block (Tok.unsafe_fake_bracket [])
 
 let basic_typed_entity id attrs tparams : G.entity =
-  G.basic_entity id ~attrs ~tparams
+  G.basic_entity id ~attrs ?tparams
 
 let stringify_without_quotes str =
   let s, t = str in
@@ -991,7 +991,7 @@ and catch_clause (env : env) ((v1, v2, v3, v4, v5, v6) : CST.catch_clause) =
   let v4 = (* variable *) Some (str env v4) in
   let _v5 = (* ")" *) token env v5 in
   let v6 = compound_statement env v6 in
-  let exn = G.CatchParam (G.param_of_type v3 ~pname:v4) in
+  let exn = G.CatchParam (G.param_of_type v3 ?pname:v4) in
   (v1, exn, v6)
 
 and class_const_declaration (env : env)
@@ -1775,7 +1775,7 @@ and member_declarations (env : env) ((v1, v2, v3) : CST.member_declarations) =
         | `Ellips tok ->
             let tok = token env tok in
             (* "..." *)
-            [ G.fieldEllipsis tok ])
+            [ G.field_ellipsis tok ])
       v2
   in
   let v3 = (* "}" *) token env v3 in
@@ -2938,7 +2938,7 @@ let script (env : env) ((v1, v2) : CST.script) : G.program =
 let parse file =
   H.wrap_parser
     (fun () -> Tree_sitter_hack.Parse.file !!file)
-    (fun cst ->
+    (fun cst _extras ->
       let extra = Target in
       let env = { H.file; conv = H.line_col_to_pos file; extra } in
       try script env cst with
@@ -2960,7 +2960,7 @@ let parse_expression_or_source_file str =
 let parse_pattern str =
   H.wrap_parser
     (fun () -> parse_expression_or_source_file str)
-    (fun cst ->
+    (fun cst _extras ->
       let file = Fpath.v "<pattern>" in
       (* TODO: do we need a special mode to convert $FOO in the
        * right construct? Is $XXX ambiguous in a semgrep context?

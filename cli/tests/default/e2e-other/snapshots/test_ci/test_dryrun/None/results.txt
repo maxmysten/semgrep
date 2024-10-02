@@ -156,7 +156,7 @@ Would have sent findings and ignores blob: {
                                 "offset": 352
                             }
                         },
-                        "danger"
+                        "<code omitted>"
                     ]
                 ],
                 "intermediate_vars": [
@@ -174,7 +174,7 @@ Would have sent findings and ignores blob: {
                                 "offset": 343
                             }
                         },
-                        "content": "d2"
+                        "content": "<code omitted>"
                     }
                 ],
                 "taint_sink": [
@@ -193,7 +193,7 @@ Would have sent findings and ignores blob: {
                                 "offset": 365
                             }
                         },
-                        "sink(d2)"
+                        "<code omitted>"
                     ]
                 ]
             },
@@ -241,6 +241,7 @@ Would have sent findings and ignores blob: {
                         "ecosystem": "pypi",
                         "allowed_hashes": {},
                         "transitivity": "unknown",
+                        "lockfile_path": "poetry.lock",
                         "line_number": 2
                     },
                     "lockfile": "poetry.lock"
@@ -752,8 +753,8 @@ Would have sent complete blob: {
             ".txt": 1
         },
         "lockfile_scan_info": {
-            "poetry.lock": 3,
-            "yarn.lock": 1
+            "yarn.lock": 1,
+            "poetry.lock": 3
         },
         "parse_rate": {
             "python": {

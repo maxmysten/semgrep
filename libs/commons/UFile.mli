@@ -98,6 +98,16 @@ val lfile_exists : Fpath.t -> bool
 
 (* no raised Unix_error if the directory does not exist *)
 val dir_exists : Fpath.t -> bool
+val file_kind_to_yojson : Unix.file_kind -> Yojson.Safe.t
+val file_kind_of_yojson : Yojson.Safe.t -> (Unix.file_kind, string) result
+
+(*****************************************************************************)
+(* Filesystem manipulation *)
+(*****************************************************************************)
+(* Makes the given directory as well as its parent directories.
+ * Raises Unix_error if A non-directory object with the same name exists.
+ *)
+val make_directories : Fpath.t -> unit
 
 (*****************************************************************************)
 (* Legacy API using 'string' for filenames instead of Fpath.t *)

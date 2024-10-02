@@ -1,4 +1,6 @@
+from typing import List
 from typing import Optional
+from typing import Tuple
 
 import semgrep.semgrep_interfaces.semgrep_output_v1 as out
 from semgrep.rpc import rpc_call
@@ -45,4 +47,26 @@ def contributions() -> out.Contributions:
     if ret is None:
         logger.warning("Failed to collect contributions. Continuing with scan...")
         return out.Contributions([])
+    return ret.value
+
+
+def validate(fp: out.Fpath) -> bool:
+    call = out.FunctionCall(out.CallValidate(fp))
+    ret: Optional[out.RetValidate] = rpc_call(call, out.RetValidate)
+    if ret is None:
+        logger.error("Failed to validate semgrep configuration")
+        return out.RetValidate(False).value
+    return ret.value
+
+
+def resolve_dependencies(
+    args: List[out.Manifest],
+) -> Optional[List[Tuple[out.Manifest, out.ResolutionResult]]]:
+    call = out.FunctionCall(out.CallResolveDependencies(args))
+    ret: Optional[out.RetResolveDependencies] = rpc_call(
+        call, out.RetResolveDependencies
+    )
+    if ret is None:
+        logger.warning("failed to resolve dependencies")
+        return None
     return ret.value

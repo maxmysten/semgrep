@@ -126,6 +126,7 @@ let known_subcommands =
     "install-ci";
     "show";
     "test";
+    "validate";
     (* pro-only and osemgrep-only *)
     "interactive";
   ]
@@ -240,7 +241,12 @@ let dispatch_subcommand (caps : caps) (argv : string array) =
               subcmd_argv
         | "test" ->
             Test_subcommand.main
-              (caps :> < Cap.stdout ; Cap.network ; Cap.tmp >)
+              (caps :> < Cap.stdout ; Cap.fork ; Cap.alarm >)
+              subcmd_argv
+        | "validate" ->
+            Validate_subcommand.main
+              (caps
+                :> < Cap.stdout ; Cap.network ; Cap.tmp ; Cap.fork ; Cap.alarm >)
               subcmd_argv
         | _ ->
             if experimental then

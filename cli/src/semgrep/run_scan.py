@@ -12,6 +12,7 @@
 # old: this file used to be called semgrep_main.py
 #
 import json
+import sys
 import time
 from io import StringIO
 from os import environ
@@ -30,15 +31,20 @@ from typing import Tuple
 from typing import Union
 
 from boltons.iterutils import partition
+from rich.progress import Progress
+from rich.progress import SpinnerColumn
+from rich.progress import TextColumn
 
 import semgrep.scan_report as scan_report
 import semgrep.semgrep_interfaces.semgrep_output_v1 as out
-from semdep.parse_lockfile import parse_lockfile_path
+from semdep.lockfile import EcosystemLockfiles
 from semdep.parsers.util import DependencyParserError
 from semgrep import __VERSION__
 from semgrep import tracing
 from semgrep.autofix import apply_fixes
+from semgrep.config_resolver import ConfigLoader
 from semgrep.config_resolver import get_config
+from semgrep.console import console
 from semgrep.constants import DEFAULT_DIFF_DEPTH
 from semgrep.constants import DEFAULT_TIMEOUT
 from semgrep.constants import OutputFormat
@@ -71,11 +77,13 @@ from semgrep.semgrep_interfaces.semgrep_metrics import SecretsConfig
 from semgrep.semgrep_interfaces.semgrep_metrics import SecretsOrigin
 from semgrep.semgrep_interfaces.semgrep_metrics import Semgrep as SemgrepSecretsOrigin
 from semgrep.semgrep_interfaces.semgrep_metrics import SupplyChainConfig
+from semgrep.semgrep_interfaces.semgrep_output_v1 import Ecosystem
 from semgrep.semgrep_interfaces.semgrep_output_v1 import FoundDependency
 from semgrep.semgrep_interfaces.semgrep_output_v1 import Product
 from semgrep.semgrep_types import JOIN_MODE
 from semgrep.state import get_state
-from semgrep.target_manager import ECOSYSTEM_TO_LOCKFILES
+from semgrep.subproject import resolve_subprojects
+from semgrep.subproject import Subproject
 from semgrep.target_manager import FileTargetingLog
 from semgrep.target_manager import SAST_PRODUCT
 from semgrep.target_manager import SCA_PRODUCT
@@ -112,7 +120,7 @@ def get_file_ignore(max_log_list_entries: int) -> FileIgnore:
         semgrepignore_path = Path(workdir / IGNORE_FILE_NAME)
         if not semgrepignore_path.is_file():
             logger.verbose(
-                "No .semgrepignore found. Using default .semgrepignore rules. See the docs for the list of default ignores: https://semgrep.dev/docs/cli-usage/#ignoring-files"
+                "No .semgrepignore found. Using default .semgrepignore rules. See the docs for the list of default ignores: https://semgrep.dev/docs/cli-usage/#ignore-files"
             )
             semgrepignore_path = TEMPLATES_DIR / IGNORE_FILE_NAME
         else:
@@ -193,6 +201,7 @@ def run_rules(
     *,
     with_code_rules: bool = True,
     with_supply_chain: bool = False,
+    enable_experimental_requirements: bool = False,
 ) -> Tuple[
     RuleMatchMap,
     List[SemgrepError],
@@ -204,22 +213,48 @@ def run_rules(
     if not target_mode_config:
         target_mode_config = TargetModeConfig.whole_scan()
 
-    cli_ux = get_state().get_cli_ux_flavor()
-    plans = scan_report.print_scan_status(
-        filtered_rules,
-        target_manager,
-        target_mode_config,
-        cli_ux=cli_ux,
-        with_code_rules=with_code_rules,
-        with_supply_chain=with_supply_chain,
-    )
-
     join_rules, rest_of_the_rules = partition(
         filtered_rules, lambda rule: rule.mode == JOIN_MODE
     )
     dependency_aware_rules = [r for r in rest_of_the_rules if r.project_depends_on]
     dependency_only_rules, rest_of_the_rules = partition(
         rest_of_the_rules, lambda rule: not rule.should_run_on_semgrep_core
+    )
+
+    resolved_deps: Dict[Ecosystem, List[Subproject]] = {}
+    dependency_parser_errors: List[DependencyParserError] = []
+    sca_dependency_targets: List[Path] = []
+
+    # Temporary flag to allow us to test the new requirements lockfile matchers
+    # TODO(sal): remove once GA
+    EcosystemLockfiles.init(
+        use_new_requirements_matchers=enable_experimental_requirements
+    )
+
+    if len(dependency_aware_rules) > 0:
+        # identify and parse lockfiles before beginning the scan
+        # to produce dependency information that is used throughout.
+        # only do so if there is at least one dependency aware rule to
+        # use the information.
+        (
+            resolved_deps,
+            dependency_parser_errors,
+            sca_dependency_targets,
+        ) = resolve_subprojects(
+            target_manager,
+            enable_experimental_requirements=enable_experimental_requirements,
+        )
+
+    cli_ux = get_state().get_cli_ux_flavor()
+    plans = scan_report.print_scan_status(
+        filtered_rules,
+        target_manager,
+        target_mode_config,
+        resolved_deps,
+        dependency_parser_errors,
+        cli_ux=cli_ux,
+        with_code_rules=with_code_rules,
+        with_supply_chain=with_supply_chain,
     )
 
     # Dispatching to semgrep-core!
@@ -238,6 +273,7 @@ def run_rules(
         run_secrets,
         disable_secrets_validation,
         target_mode_config,
+        resolved_deps,
     )
 
     if join_rules:
@@ -245,7 +281,9 @@ def run_rules(
 
         for rule in join_rules:
             join_rule_matches, join_rule_errors = join_rule.run_join_rule(
-                rule.raw, [target.path for target in target_manager.targets]
+                rule.raw,
+                [target.path for target in target_manager.targets],
+                enable_experimental_requirements=enable_experimental_requirements,
             )
             join_rule_matches_set = RuleMatches(rule)
             for m in join_rule_matches:
@@ -256,8 +294,6 @@ def run_rules(
             rule_matches_by_rule.update(join_rule_matches_by_rule)
             output_handler.handle_semgrep_errors(join_rule_errors)
 
-    dependencies = {}
-    dependency_parser_errors = []
     if len(dependency_aware_rules) > 0:
         from semgrep.dependency_aware_rule import (
             generate_unreachable_sca_findings,
@@ -278,7 +314,7 @@ def run_rules(
                 ) = generate_reachable_sca_findings(
                     rule_matches_by_rule.get(rule, []),
                     rule,
-                    target_manager,
+                    resolved_deps,
                 )
                 rule_matches_by_rule[rule] = dep_rule_matches
                 output_handler.handle_semgrep_errors(dep_rule_errors)
@@ -286,7 +322,9 @@ def run_rules(
                     dep_rule_matches,
                     dep_rule_errors,
                 ) = generate_unreachable_sca_findings(
-                    rule, target_manager, already_reachable
+                    rule,
+                    already_reachable,
+                    resolved_deps,
                 )
                 rule_matches_by_rule[rule].extend(dep_rule_matches)
                 output_handler.handle_semgrep_errors(dep_rule_errors)
@@ -295,29 +333,27 @@ def run_rules(
                     dep_rule_matches,
                     dep_rule_errors,
                 ) = generate_unreachable_sca_findings(
-                    rule, target_manager, lambda p, d: False
+                    rule, lambda p, d: False, resolved_deps
                 )
                 rule_matches_by_rule[rule] = dep_rule_matches
                 output_handler.handle_semgrep_errors(dep_rule_errors)
 
-        # Generate stats per lockfile:
-        for ecosystem in ECOSYSTEM_TO_LOCKFILES.keys():
-            for lockfile in target_manager.get_lockfiles(
-                ecosystem, ignore_baseline_handler=True
-            ):
-                # Add lockfiles as a target that was scanned
-                output_extra.all_targets.add(lockfile)
-                # Warning temporal assumption: this is the only place we process
-                # parse errors. We silently toss them in other places we call parse_lockfile_path
-                # It doesn't really matter where it gets handled as long as we collect the parse errors somewhere
-                deps, parse_errors = parse_lockfile_path(lockfile)
-                dependencies[str(lockfile)] = deps
-                dependency_parser_errors.extend(parse_errors)
+        # The caller expects a map from lockfile path to `FoundDependency` items rather than our Subproject representation
+        found_dependencies: Dict[str, List[FoundDependency]] = {}
+        for ecosystem in resolved_deps:
+            for proj in resolved_deps[ecosystem]:
+                found_dependencies.update(proj.map_lockfile_to_dependencies())
+
+        for target in sca_dependency_targets:
+            output_extra.all_targets.add(target)
+    else:
+        found_dependencies = {}
+
     return (
         rule_matches_by_rule,
         semgrep_errors,
         output_extra,
-        dependencies,
+        found_dependencies,
         dependency_parser_errors,
         plans,
     )
@@ -386,6 +422,7 @@ def run_scan(
     x_ls: bool = False,
     path_sensitive: bool = False,
     capture_core_stderr: bool = True,
+    enable_experimental_requirements: bool = False,
 ) -> Tuple[
     RuleMatchMap,
     List[SemgrepError],
@@ -427,14 +464,32 @@ def run_scan(
     profiler = ProfileManager()
 
     rule_start_time = time.time()
-    configs_obj, config_errors = get_config(
-        pattern,
-        lang,
-        configs,
-        replacement=replacement,
-        project_url=project_url,
-        no_rewrite_rule_ids=no_rewrite_rule_ids,
+
+    includes_remote_config = ConfigLoader.includes_remote_config(configs)
+    progress_msg = (
+        "Loading rules from registry..."
+        if includes_remote_config
+        else "Loading rules..."
     )
+
+    with Progress(
+        SpinnerColumn(style="green"),
+        TextColumn("[bold]{task.description}[/bold]"),
+        transient=True,
+        console=console,
+        disable=(not sys.stderr.isatty()),
+    ) as progress:
+        task_id = progress.add_task(f"{progress_msg}", total=1)
+        configs_obj, config_errors = get_config(
+            pattern,
+            lang,
+            configs,
+            replacement=replacement,
+            project_url=project_url,
+            no_rewrite_rule_ids=no_rewrite_rule_ids,
+        )
+        progress.remove_task(task_id)
+
     all_rules = configs_obj.get_rules(no_rewrite_rule_ids)
     profiler.save("config_time", rule_start_time)
 
@@ -623,6 +678,7 @@ def run_scan(
         target_mode_config,
         with_code_rules=with_code_rules,
         with_supply_chain=with_supply_chain,
+        enable_experimental_requirements=enable_experimental_requirements,
     )
     profiler.save("core_time", core_start_time)
     semgrep_errors: List[SemgrepError] = config_errors + scan_errors
@@ -726,6 +782,7 @@ def run_scan(
                         run_secrets,
                         disable_secrets_validation,
                         baseline_target_mode_config,
+                        enable_experimental_requirements=enable_experimental_requirements,
                     )
                     rule_matches_by_rule = remove_matches_in_baseline(
                         rule_matches_by_rule,

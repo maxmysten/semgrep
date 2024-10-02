@@ -189,13 +189,12 @@ let rec map_aritylesspredicateexpr (env : env)
   let id = map_literalid env v2 in
   match v1 with
   | Some (v1, v2) ->
-      let v1 = map_moduleexpr ~last:(Some (id, None)) env v1 in
+      let v1 = map_moduleexpr ~last:(id, None) env v1 in
       let v2 = (* "::" *) token env v2 in
       v1
   | None -> name_of_id id
 
-and map_moduleexpr ?(last = None) (env : env) (x : CST.moduleexpr) :
-    qualified_info =
+and map_moduleexpr ?last (env : env) (x : CST.moduleexpr) : qualified_info =
   match x with
   | `Simp x -> (
       let id = map_modulename env x in
@@ -211,7 +210,7 @@ and map_moduleexpr ?(last = None) (env : env) (x : CST.moduleexpr) :
         | `Simp x -> (map_modulename env x, None)
         | `Modu x -> map_moduleinstantiation env x
       in
-      let v1 = map_moduleexpr ~last:(Some v3) env v1 in
+      let v1 = map_moduleexpr ~last:v3 env v1 in
       let _v2 = (* "::" *) token env v2 in
       match last with
       | None -> v1
@@ -256,7 +255,7 @@ and map_typeexpr (env : env) (x : CST.typeexpr) : name =
       let id = map_classname env v2 in
       match v1 with
       | Some (v1, v2) ->
-          let v1 = map_moduleexpr ~last:(Some (id, None)) env v1 in
+          let v1 = map_moduleexpr ~last:(id, None) env v1 in
           let v2 = (* "::" *) token env v2 in
           IdQualified v1
       | None -> Id id)
@@ -1118,7 +1117,7 @@ let map_ql (env : env) (x : CST.ql) : any =
 let parse file =
   H.wrap_parser
     (fun () -> Tree_sitter_ql.Parse.file !!file)
-    (fun cst ->
+    (fun cst _extras ->
       let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
       match map_ql env cst with
       | Pr xs -> xs
@@ -1127,7 +1126,7 @@ let parse file =
 let parse_string ~file ~contents =
   H.wrap_parser
     (fun () -> Tree_sitter_ql.Parse.string ~src_file:file contents)
-    (fun cst ->
+    (fun cst _extras ->
       let env =
         {
           H.file = Fpath.v file;
@@ -1151,7 +1150,7 @@ let parse_expression_or_source_file str =
 let parse_pattern str =
   H.wrap_parser
     (fun () -> parse_expression_or_source_file str)
-    (fun cst ->
+    (fun cst _extras ->
       let file = Fpath.v "<pattern>" in
       let env = { H.file; conv = H.line_col_to_pos_pattern str; extra = () } in
       map_ql env cst)

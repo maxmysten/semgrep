@@ -52,6 +52,11 @@ val langs_of_pattern : string * Xlang.t option -> Xlang.t list
  *
  * It also returns "unrecoverable errors", in the form of `Rule.Error.t`,
  * which are errors that should prevent further execution, and not be skipped.
+ *
+ * The <Cap.tmp> is because we can fetch rules from the registry but
+ * Parse_rule.ml requires a (temporary) file to parse.
+ *
+ * Note that this also handles the experiment rules in jsonnet!
  *)
 val rules_from_rules_source :
   token_opt:Auth.token option ->
@@ -100,7 +105,7 @@ val load_rules_from_file :
 
 val load_rules_from_url :
   origin:origin ->
-  ?token_opt:Auth.token option ->
+  ?token_opt:Auth.token ->
   ?ext:string ->
   < Cap.network ; Cap.tmp ; .. > ->
   Uri.t ->

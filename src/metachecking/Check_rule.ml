@@ -69,7 +69,7 @@ let error (rule : Rule.t) (t : Tok.t) (s : string) : Core_error.t =
   let loc = Tok.unsafe_loc_of_tok t in
   let _check_idTODO = "semgrep-metacheck-builtin" in
   let rule_id, _ = rule.id in
-  E.mk_error ~rule_id:(Some rule_id) ~msg:s loc OutJ.SemgrepMatchFound
+  E.mk_error ~rule_id ~msg:s loc OutJ.SemgrepMatchFound
 
 (*****************************************************************************)
 (* Checks *)
@@ -268,7 +268,7 @@ let semgrep_check (caps : Core_scan.caps) (metachecks : Fpath.t)
     {
       Core_scan_config.default with
       rule_source = Rule_file metachecks;
-      target_source = Some (Targets targets);
+      target_source = Targets targets;
       (* we're used from pysemgrep --validate *)
       output_format = Json true;
     }
@@ -336,7 +336,7 @@ let check_files (caps : < Cap.stdout ; Cap.fork ; Cap.alarm >)
   in
   match output_format with
   | NoOutput -> ()
-  | Text _ ->
+  | Text ->
       errors
       |> List.iter (fun err ->
              Logs.err (fun m -> m "%s" (E.string_of_error err)))

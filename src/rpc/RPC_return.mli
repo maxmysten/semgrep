@@ -14,3 +14,11 @@ val sarif_format :
   string * float
 
 val contributions : < Cap.exec > -> Out.contributions
+val validate : Out.fpath -> bool
+
+val hook_resolve_dependencies :
+  (< Cap.exec ; Cap.tmp > ->
+  Out.manifest list ->
+  (Out.manifest * Out.resolution_result) list)
+  option
+  ref

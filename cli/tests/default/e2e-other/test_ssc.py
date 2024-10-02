@@ -1,3 +1,4 @@
+import json
 import logging
 from pathlib import Path
 
@@ -6,6 +7,7 @@ from tests.conftest import RULES_PATH
 from tests.conftest import TARGETS_PATH
 from tests.fixtures import RunSemgrep
 
+from semdep.lockfile import Lockfile
 from semdep.package_restrictions import is_in_range
 from semgrep.semgrep_interfaces.semgrep_output_v1 import Ecosystem
 from semgrep.semgrep_interfaces.semgrep_output_v1 import Maven
@@ -124,6 +126,10 @@ pytestmark = pytest.mark.kinda_slow
         ),
         (
             "rules/dependency_aware/python-requirements-sca.yaml",
+            "dependency_aware/requirements_pip",
+        ),
+        (
+            "rules/dependency_aware/python-requirements-sca.yaml",
             "dependency_aware/requirements_with_uppercase_package_name",
         ),
         (
@@ -225,12 +231,104 @@ pytestmark = pytest.mark.kinda_slow
             "rules/dependency_aware/swift-sca.yaml",
             "dependency_aware/swiftpm/v2",
         ),
+        (
+            "rules/dependency_aware/swift-sca.yaml",
+            "dependency_aware/swiftpm_missing_version",
+        ),
     ],
 )
 @pytest.mark.osemfail
 def test_ssc(run_semgrep_on_copied_files: RunSemgrep, snapshot, rule, target):
+    result = run_semgrep_on_copied_files(rule, target_name=target)
+
     snapshot.assert_match(
-        run_semgrep_on_copied_files(rule, target_name=target).as_snapshot(),
+        result.as_snapshot(),
+        "results.txt",
+    )
+
+
+@pytest.mark.parametrize(
+    "rule,target",
+    [
+        (
+            "rules/dependency_aware/python-requirements-sca.yaml",
+            "dependency_aware/requirement",
+        ),
+        (
+            "rules/dependency_aware/python-requirements-sca.yaml",
+            "dependency_aware/requirements_folder",
+        ),
+        (
+            "rules/dependency_aware/python-requirements-sca.yaml",
+            "dependency_aware/requirements_folder_dep_dupes",
+        ),
+        (
+            "rules/dependency_aware/python-requirements-sca.yaml",
+            "dependency_aware/requirements_folder_no_src",
+        ),
+        (
+            "rules/dependency_aware/python-requirements-sca.yaml",
+            "dependency_aware/requirements_folder_similar_deps",
+        ),
+        (
+            "rules/dependency_aware/python-requirements-sca.yaml",
+            "dependency_aware/requirements_multiple_lockfiles",
+        ),
+        (
+            "rules/dependency_aware/python-requirements-sca.yaml",
+            "dependency_aware/requirements_multiple_lockfiles_dep_dupes",
+        ),
+        (
+            "rules/dependency_aware/python-requirements-sca.yaml",
+            "dependency_aware/requirements_multiple_lockfiles_dep_dupes_no_src",
+        ),
+        (
+            "rules/dependency_aware/python-requirements-sca.yaml",
+            "dependency_aware/requirements_multiple_lockfiles_no_src",
+        ),
+        (
+            "rules/dependency_aware/python-requirements-sca.yaml",
+            "dependency_aware/requirements_multiple_lockfiles_similar_deps",
+        ),
+        (
+            "rules/dependency_aware/python-requirements-sca.yaml",
+            "dependency_aware/requirements_nested",
+        ),
+        (
+            "rules/dependency_aware/python-requirements-sca.yaml",
+            "dependency_aware/requirements_nested_no_src",
+        ),
+        (
+            "rules/dependency_aware/python-requirements-sca.yaml",
+            "dependency_aware/requirements_nested_dep_dupes",
+        ),
+        (
+            "rules/dependency_aware/python-requirements-sca.yaml",
+            "dependency_aware/requirements_nested_folder",
+        ),
+        (
+            "rules/dependency_aware/python-requirements-sca.yaml",
+            "dependency_aware/requirements_nested_folder_dep_dupes",
+        ),
+        (
+            "rules/dependency_aware/python-requirements-sca.yaml",
+            "dependency_aware/requirements_nested_folder_no_src",
+        ),
+    ],
+)
+@pytest.mark.osemfail
+def test_ssc__requirements_lockfiles(
+    run_semgrep_on_copied_files: RunSemgrep, snapshot, rule, target
+):
+    """
+    Seperated out from test_ssc to avoid polluting with extra requirements lockfile tests
+    """
+    result = run_semgrep_on_copied_files(
+        rule, target_name=target, options=["--enable-experimental-requirements"]
+    )
+
+    snapshot.assert_match(
+        result.as_snapshot(),
         "results.txt",
     )
 
@@ -343,9 +441,16 @@ def test_maven_version_comparison(version, specifier, outcome):
 # They also include random lockfiles we want to make sure we parse predictably
 @pytest.mark.no_semgrep_cli
 @pytest.mark.osemfail
-def test_parsing(parse_lockfile_path_in_tmp, caplog, target):
+def test_parsing(caplog, target, snapshot, lockfile_path_in_tmp):
+    # Setup
     caplog.set_level(logging.ERROR)
-    _, error = parse_lockfile_path_in_tmp(Path(target))
+
+    # Parse
+    lockfile = Lockfile.from_path(Path(target))
+    dependencies, error = lockfile.parse()
+
+    # Assert
+
     # These two files have some packages we cannot really make sense of, so we ignore them
     # We include our failures in the error output for informational purposes
     if target.endswith("files/pnpm-lock.yaml"):
@@ -357,6 +462,9 @@ def test_parsing(parse_lockfile_path_in_tmp, caplog, target):
     else:
         assert len(error) == 0
     assert len(caplog.records) == 0
+
+    snapshot_deps = [dependency.to_json() for dependency in dependencies]
+    snapshot.assert_match(json.dumps(snapshot_deps, indent=2), "dependencies.json")
 
 
 # Quite awkward. To test that we can handle a target whose toplevel parent

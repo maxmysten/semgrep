@@ -542,7 +542,7 @@ let matches_of_xpatterns ~has_as_metavariable ~mvar_context rule
   (* final result *)
   RP.collate_pattern_results
     [
-      matches_of_patterns ~has_as_metavariable ~mvar_context rule xconf xtarget
+      matches_of_patterns ~has_as_metavariable ?mvar_context rule xconf xtarget
         patterns;
       Xpattern_match_spacegrep.matches_of_spacegrep xconf spacegreps
         internal_path_to_content origin;
@@ -557,7 +557,7 @@ let matches_of_xpatterns ~has_as_metavariable ~mvar_context rule
 (* Maching explanations helpers *)
 (*****************************************************************************)
 
-let if_explanations ?(extra = None) (env : env) (ranges : RM.ranges)
+let if_explanations ?extra (env : env) (ranges : RM.ranges)
     (children : ME.t option list) (op, tok) : ME.t option =
   if env.xconf.matching_explanations then
     let matches = pms_of_ranges env ranges in
@@ -670,7 +670,9 @@ let mk_expls_after_formula_kind ~formula_kind_expls ~filter_expls ~focus_expls
 (* Metavariable condition evaluation *)
 (*****************************************************************************)
 
-let hook_pro_entropy_analysis : (string -> bool) option ref = ref None
+let hook_pro_entropy_analysis :
+    (mode:Rule.entropy_analysis_mode -> string -> bool) option ref =
+  ref None
 
 let hook_pro_metavariable_name :
     (G.expr -> Rule.metavar_cond_name -> bool) option ref =
@@ -780,7 +782,7 @@ let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
               *)
              | Some capture_bindings -> Some (r, capture_bindings @ new_bindings)
              )
-         | R.CondAnalysis (mvar, CondEntropyV2) -> (
+         | R.CondAnalysis (mvar, CondEntropyV2 mode) -> (
              match !hook_pro_entropy_analysis with
              | None ->
                  (* TODO - nice UX handling of this for pysemgrep - tell the user
@@ -796,7 +798,7 @@ let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
              | Some f ->
                  let bindings = r.mvars in
                  Metavariable_analysis.analyze_string_metavar env bindings mvar
-                   f
+                   (f ~mode)
                  |> map_bool r)
          | R.CondAnalysis (mvar, CondEntropy) ->
              let bindings = r.mvars in
@@ -1079,11 +1081,10 @@ and evaluate_formula_kind env opt_context (kind : Rule.formula_kind) =
                  whether a match was removed by positive intersection or negation.
               *)
               ~extra:
-                (Some
-                   (ME.mk_extra
-                      ~before_negation_matches:
-                        (pms_of_ranges env ranges_before_negation)
-                      ()))
+                (ME.mk_extra
+                   ~before_negation_matches:
+                     (pms_of_ranges env ranges_before_negation)
+                   ())
               (OutJ.And, t)
           in
           (ranges, expl))

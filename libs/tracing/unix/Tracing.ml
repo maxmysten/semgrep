@@ -74,15 +74,18 @@ let pp_span fmt = Format.fprintf fmt "%Ldl"
 
 type user_data = Trace_core.user_data
 
+type config = {
+  endpoint : Uri.t;
+  (* To add data to our opentelemetry top span, so easier to filter *)
+  top_level_span : span option;
+}
+[@@deriving show]
+
 (*****************************************************************************)
 (* Constants *)
 (*****************************************************************************)
 
 (* Coupling: these need to be kept in sync with tracing.py *)
-
-let default_endpoint = "https://telemetry.semgrep.dev"
-let default_dev_endpoint = "https://telemetry.dev2.semgrep.dev"
-let default_local_endpoint = "http://localhost:4318"
 let trace_level_var = "SEMGREP_TRACE_LEVEL"
 let parent_span_id_var = "SEMGREP_TRACE_PARENT_SPAN_ID"
 let parent_trace_id_var = "SEMGREP_TRACE_PARENT_TRACE_ID"
@@ -113,26 +116,74 @@ let level_to_trace_level level =
 (* Wrapping functions Trace gives us to instrument the code *)
 (*****************************************************************************)
 
+let add_data_to_span = Trace_core.add_data_to_span
+
+let opt_add_data_to_span data sp =
+  sp |> Option.iter (fun sp -> Trace_core.add_data_to_span sp data)
+
+(* This function is helpful for Semgrep, which stores an optional span *)
+let add_data data (tracing_opt : config option) =
+  tracing_opt
+  |> Option.iter (fun tracing ->
+         tracing.top_level_span |> opt_add_data_to_span data)
+
+(* We get nice ui in Jaeger if we do this *)
+let mark_span_error sp = add_data_to_span sp [ ("error", `Bool true) ]
+
+let add_yojson_to_span sp yojson =
+  yojson
+  |> List_.map (fun (key, yojson) ->
+         (key, `String (Yojson.Safe.to_string yojson)))
+  |> add_data_to_span sp
+
+(*****************************************************************************)
+(* Span/Event entrypoints *)
+(*****************************************************************************)
+
+let trace_exn sp ?(escaped = false) exn =
+  let e = Exception.catch exn in
+  let exn_msg = Printexc.to_string exn in
+  let exn_stacktrace =
+    e |> Exception.get_trace |> Printexc.raw_backtrace_to_string
+  in
+  let attrs =
+    [
+      ("exception.escaped", `Bool escaped);
+      ("exception.message", `String exn_msg);
+      ("exception.stacktrace", `String exn_stacktrace);
+    ]
+  in
+  add_data_to_span sp attrs
+
 (* General function to run with span to use for instrumentation *)
-let with_span ?(level = Info) =
+let with_span ?(level = Info) ?__FUNCTION__ ~__FILE__ ~__LINE__ ?data name f =
   let level = level_to_trace_level level in
-  Trace_core.with_span ~level
+  Trace_core.with_span ~level ?__FUNCTION__ ~__FILE__ ~__LINE__ ?data name
+    (fun sp ->
+      (* See: https://opentelemetry.io/docs/specs/semconv/exceptions/exceptions-spans/#stacktrace-representation*)
+      (* TODO: upstream this: https://github.com/imandra-ai/ocaml-opentelemetry/issues/50  *)
+      try f sp with
+      | exn ->
+          let e = Exception.catch exn in
+          trace_exn sp ~escaped:true exn;
+          mark_span_error sp;
+          Trace_core.exit_span sp;
+          Exception.reraise e)
 
 (* Run the entrypoint function with a span. If a parent span is given
    (e.g. via Semgrep Managed Scanning), use that as the parent span
    so that we can connect the semgrep-core trace to other traces. *)
 let with_top_level_span ?(level = Info) ?parent_span_id ?parent_trace_id
     ?__FUNCTION__ ~__FILE__ ~__LINE__ ?data name f =
-  let level = level_to_trace_level level in
   match (parent_span_id, parent_trace_id) with
   | None, None ->
-      Trace_core.with_span ~level ?__FUNCTION__ ~__FILE__ ~__LINE__ ?data name f
+      with_span ~level ?__FUNCTION__ ~__FILE__ ~__LINE__ ?data name f
   | None, Some _
   | Some _, None ->
       Log.err (fun m ->
           m "Both %s and %s should be set when creating a subspan"
             parent_span_id_var parent_trace_id_var);
-      Trace_core.with_span ~level ?__FUNCTION__ ~__FILE__ ~__LINE__ ?data name f
+      with_span ~level ?__FUNCTION__ ~__FILE__ ~__LINE__ ?data name f
   | Some span_id, Some trace_id ->
       let scope : Otel.Scope.t =
         {
@@ -143,19 +194,12 @@ let with_top_level_span ?(level = Info) ?parent_span_id ?parent_trace_id
         }
       in
       Otel.Scope.with_ambient_scope scope (fun () ->
-          let sp =
-            Trace_core.enter_span ~level ?__FUNCTION__ ~__FILE__ ~__LINE__ ?data
-              name
-          in
-          let res = f sp in
-          Trace_core.exit_span sp;
-          res)
+          with_span ~level ?__FUNCTION__ ~__FILE__ ~__LINE__ ?data name f)
 
-let add_data_to_span = Trace_core.add_data_to_span
-
-(* This function is helpful for Semgrep, which stores an optional span *)
-let add_data_to_opt_span sp data =
-  Option.iter (fun sp -> Trace_core.add_data_to_span sp data) sp
+let trace_data_only ?(level = Info) ~__FUNCTION__ ~__FILE__ ~__LINE__ name
+    (f : unit -> (string * Yojson.Safe.t) list) =
+  with_span ~level ~__FUNCTION__ ~__FILE__ ~__LINE__ name (fun sp ->
+      f () |> add_yojson_to_span sp)
 
 (*****************************************************************************)
 (* Entry points for setting up tracing *)
@@ -178,17 +222,7 @@ let with_tracing fname trace_endpoint data f =
    * ALT: we could also have wrapped this with a `Otel.Scope.with_ambient_scope`
      to ensure the trace_id is the same for all spans, but we decided that
      having the top level time is a good default. *)
-  let url =
-    match trace_endpoint with
-    | Some url -> (
-        (* Coupling: the endpoint options need to be kept in sync with tracing.py *)
-        match url with
-        | "semgrep-prod" -> default_endpoint
-        | "semgrep-dev" -> default_dev_endpoint
-        | "semgrep-local" -> default_local_endpoint
-        | _ -> url)
-    | None -> default_endpoint
-  in
+  let url = Uri.to_string trace_endpoint in
   let level =
     match Sys.getenv_opt trace_level_var with
     | Some level -> (
@@ -209,7 +243,8 @@ let with_tracing fname trace_endpoint data f =
     fname
   @@ fun sp -> f sp
 
-(* Alt: using cohttp_lwt
+(* Alt: using cohttp_lwt (we probably want to do this when we switch to Eio w/ *)
+(* their compatibility layer)
 
    Lwt_platform.run (let res = Opentelemetry_client_cohttp_lwt.with_setup ~config () @@ fun () ->
    run_with_span "All time" f in

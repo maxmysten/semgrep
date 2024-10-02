@@ -167,6 +167,9 @@ and map_node (env : env) (x : CST.node) : xml_body =
         }
       in
       XmlXml xml
+  | `Entity tok ->
+      (* e.g. "&lt;" *)
+      XmlText (str env tok)
   | `Text tok ->
       let v1 = str env tok (* pattern [^<>]+ *) in
       XmlText v1
@@ -237,7 +240,7 @@ let map_toplevel_node (env : env) (x : CST.toplevel_node) : xml_body =
   | `Style_elem (v1, v2, v3) -> map_node env (`Style_elem (v1, v2, v3))
   | `Errons_end_tag (v1, v2, v3) -> map_node env (`Errons_end_tag (v1, v2, v3))
 
-let map_fragment (env : env) (x : CST.fragment) :
+let map_document (env : env) (x : CST.document) :
     (xml_body list, xml_attribute) Either.t =
   match x with
   | `Rep_topl_node v1 ->
@@ -266,9 +269,9 @@ let map_fragment (env : env) (x : CST.fragment) :
 let parse file =
   H.wrap_parser
     (fun () -> Tree_sitter_html.Parse.file !!file)
-    (fun cst ->
+    (fun cst _extras ->
       let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
-      match map_fragment env cst with
+      match map_document env cst with
       | Left xs ->
           let xml =
             {
@@ -286,11 +289,11 @@ let parse file =
 let parse_pattern str =
   H.wrap_parser
     (fun () -> Tree_sitter_html.Parse.string str)
-    (fun cst ->
+    (fun cst _extras ->
       let file = Fpath.v "<pattern>" in
       let env = { H.file; conv = H.line_col_to_pos_pattern str; extra = () } in
 
-      match map_fragment env cst with
+      match map_document env cst with
       | Left xs -> (
           match xs with
           | [ XmlXml xml ] -> G.E (G.Xml xml |> G.e)

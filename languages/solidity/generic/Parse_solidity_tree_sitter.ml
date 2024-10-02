@@ -1320,7 +1320,7 @@ and map_parameter (env : env) (x : CST.parameter) : parameter =
         | Some tok -> (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) Some (str env tok)
         | None -> None
       in
-      Param (G.param_of_type ~pattrs ~pname t)
+      Param (G.param_of_type ~pattrs ?pname t)
   | `Ellips tok -> ParamEllipsis ((* "..." *) token env tok)
 
 and map_parameter_list (env : env) ((v1, v2, v3) : CST.parameter_list) :
@@ -1749,7 +1749,7 @@ let map_struct_member (env : env) (x : CST.struct_member) : field =
       let id = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env v2 in
       let _sc = (* ";" *) token env v3 in
       G.basic_field id None (Some ty)
-  | `Ellips tok -> G.fieldEllipsis ((* "..." *) token env tok)
+  | `Ellips tok -> G.field_ellipsis ((* "..." *) token env tok)
 
 let map_inheritance_specifier (env : env) (v1 : CST.inheritance_specifier) :
     class_parent =
@@ -1779,7 +1779,7 @@ let map_event_paramater (env : env) (x : CST.event_paramater) : parameter =
         | Some tok -> (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) Some (str env tok)
         | None -> None
       in
-      G.Param (G.param_of_type ~pattrs ~pname:idopt ty)
+      G.Param (G.param_of_type ~pattrs ?pname:idopt ty)
   | `Ellips v ->
       let tk = token env v in
       G.ParamEllipsis tk
@@ -2497,7 +2497,7 @@ let map_source_file (env : env) (x : CST.source_file) : any =
 let parse file =
   H.wrap_parser
     (fun () -> Tree_sitter_solidity.Parse.file !!file)
-    (fun cst ->
+    (fun cst _extras ->
       let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
       match map_source_file env cst with
       | G.Pr xs
@@ -2508,7 +2508,7 @@ let parse file =
 let parse_pattern str =
   H.wrap_parser
     (fun () -> Tree_sitter_solidity.Parse.string str)
-    (fun cst ->
+    (fun cst _extras ->
       let file = Fpath.v "<pattern>" in
       let env = { H.file; conv = H.line_col_to_pos_pattern str; extra = () } in
       map_source_file env cst)

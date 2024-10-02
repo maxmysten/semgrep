@@ -24,6 +24,8 @@
  *)
 val of_strings : string list -> Fpath.t list
 val to_strings : Fpath.t list -> string list
+val to_yojson : Fpath.t -> Yojson.Safe.t
+val of_yojson : Yojson.Safe.t -> (Fpath.t, string) result
 
 (*
    Take a nonempty list of path segments and turn them in to relative path.
@@ -74,6 +76,12 @@ val readable : root:Fpath.t -> Fpath.t -> Fpath.t
 
 (* Fpath.v "." *)
 val current_dir : Fpath.t
+
+(* exts (Fpath.v "foo.tar.gz") = ["tar";"gz"] *)
+val exts : Fpath.t -> string list
+
+(* split_ext ~multi:true (Fpath.v "a/foo.tar.gz") = Fpath.v "a/foo", ".tar.gz" *)
+val split_ext : ?multi:bool -> Fpath.t -> Fpath.t * string
 
 (* DO NOT USE THIS *)
 val fake_file : Fpath.t

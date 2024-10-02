@@ -2,6 +2,8 @@ from pathlib import Path
 
 import pytest
 
+from semdep.lockfile import Lockfile
+
 pytestmark = pytest.mark.kinda_slow
 
 paths_to_transitivity = {
@@ -66,12 +68,9 @@ paths_to_transitivity = {
         "targets/dependency_aware/log4j/maven_dep_tree.txt",
     ],
 )
-def test_child_construction(
-    parse_lockfile_path_in_tmp, target_supports_path_to_transitivity
-):
-    dependencies, error = parse_lockfile_path_in_tmp(
-        Path(target_supports_path_to_transitivity)
-    )
+def test_child_construction(lockfile_path_in_tmp, target_supports_path_to_transitivity):
+    lockfile = Lockfile.from_path(Path(target_supports_path_to_transitivity))
+    dependencies, error = lockfile.parse()
 
     """
     This might be weird but I wanted to create a simple test that people can reuse as we
@@ -88,5 +87,5 @@ def test_child_construction(
     desiredResult = paths_to_transitivity[target_supports_path_to_transitivity]
     assert len(error) == 0
     for dependency in dependencies:
-        dependency_children = [child.to_json() for child in dependency.children]
+        dependency_children = [child.to_json() for child in (dependency.children or [])]
         assert dependency_children == desiredResult[dependency.package]

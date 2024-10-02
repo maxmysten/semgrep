@@ -470,7 +470,7 @@ and map_formal_parameter (env : env) (x : CST.formal_parameter) : G.parameter =
       let id = map_identifier env v1 in
       let _teq = (* "=" *) token env v2 in
       let e = map_expression env v3 in
-      G.Param (G.param_of_id id ~pdefault:(Some e))
+      G.Param (G.param_of_id id ~pdefault:e)
   | `Dots tok ->
       (* not semgrep-ext: either, part of the original language *)
       let t = (* "..." *) token env tok in
@@ -593,14 +593,14 @@ and map_unary (env : env) (x : CST.unary) : G.expr =
 let parse file =
   H.wrap_parser
     (fun () -> Tree_sitter_r.Parse.file !!file)
-    (fun cst ->
+    (fun cst _extras ->
       let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
       map_program env cst)
 
 let parse_pattern str =
   H.wrap_parser
     (fun () -> Tree_sitter_r.Parse.string str)
-    (fun cst ->
+    (fun cst _extras ->
       let file = Fpath.v "<pattern>" in
       let env = { H.file; conv = H.line_col_to_pos_pattern str; extra = () } in
       G.Ss (map_program env cst))

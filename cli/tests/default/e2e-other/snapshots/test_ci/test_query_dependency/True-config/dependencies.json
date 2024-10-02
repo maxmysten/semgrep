@@ -1,30 +1,4 @@
 {
-  "poetry.lock": [
-    {
-      "package": "badlib",
-      "version": "99.99.99",
-      "ecosystem": "pypi",
-      "allowed_hashes": {},
-      "transitivity": "unknown",
-      "line_number": 2
-    },
-    {
-      "package": "mypy",
-      "version": "0.950",
-      "ecosystem": "pypi",
-      "allowed_hashes": {},
-      "transitivity": "unknown",
-      "line_number": 10
-    },
-    {
-      "package": "python-dateutil",
-      "version": "2.8.2",
-      "ecosystem": "pypi",
-      "allowed_hashes": {},
-      "transitivity": "unknown",
-      "line_number": 18
-    }
-  ],
   "yarn.lock": [
     {
       "package": "lodash",
@@ -37,7 +11,37 @@
       },
       "transitivity": "unknown",
       "resolved_url": "https://registry.yarnpkg.com/lodash/-/lodash-4.17.18.tgz",
+      "lockfile_path": "yarn.lock",
       "line_number": 5
+    }
+  ],
+  "poetry.lock": [
+    {
+      "package": "badlib",
+      "version": "99.99.99",
+      "ecosystem": "pypi",
+      "allowed_hashes": {},
+      "transitivity": "unknown",
+      "lockfile_path": "poetry.lock",
+      "line_number": 2
+    },
+    {
+      "package": "mypy",
+      "version": "0.950",
+      "ecosystem": "pypi",
+      "allowed_hashes": {},
+      "transitivity": "unknown",
+      "lockfile_path": "poetry.lock",
+      "line_number": 10
+    },
+    {
+      "package": "python-dateutil",
+      "version": "2.8.2",
+      "ecosystem": "pypi",
+      "allowed_hashes": {},
+      "transitivity": "unknown",
+      "lockfile_path": "poetry.lock",
+      "line_number": 18
     }
   ]
 }

@@ -4,6 +4,7 @@ module Term = Cmdliner.Term
 module Cmd = Cmdliner.Cmd
 module H = Cmdliner_
 module Show = Show_CLI
+module C = CLI_common
 
 (*****************************************************************************)
 (* Prelude *)
@@ -59,9 +60,10 @@ type conf = {
   (* Ugly: should be in separate subcommands *)
   version : bool;
   show : Show_CLI.conf option;
-  validate : Validate_subcommand.conf option;
+  validate : Validate_CLI.conf option;
   test : Test_CLI.conf option;
   ls : bool;
+  experimental_requirements_lockfiles : bool;
 }
 [@@deriving show]
 
@@ -82,28 +84,7 @@ let default : conf =
       };
     autofix = false;
     (* alt: could move in a Core_runner.default *)
-    core_runner_conf =
-      {
-        (* Maxing out number of cores used to 16 if more not requested to
-         * not overload on large machines.
-         * Also, hardcode num_jobs to 1 for non-unix (i.e. Windows) because
-         * we don't believe that Parmap works in those environments
-         * TODO: figure out a solution for Windows multi-processing (OCaml 5 in
-         * the worst case)
-         *)
-        Core_runner.num_jobs =
-          min 16 (if Sys.unix then Parmap_.get_cpu_count () else 1);
-        timeout = 5.0;
-        (* ^ seconds, keep up-to-date with User_settings.ml and constants.py *)
-        timeout_threshold = 3;
-        max_memory_mb = 0;
-        optimizations = true;
-        dataflow_traces = false;
-        matching_explanations = false;
-        time_flag = false;
-        nosem = true;
-        strict = false;
-      };
+    core_runner_conf = Core_runner.default_conf;
     error_on_findings = false;
     (* could be move in CLI_common.default_conf? *)
     common =
@@ -128,6 +109,7 @@ let default : conf =
     validate = None;
     test = None;
     ls = false;
+    experimental_requirements_lockfiles = false;
   }
 
 (*************************************************************************)
@@ -461,7 +443,7 @@ let o_time : bool Term.t =
     ~default:default.core_runner_conf.time_flag
     ~doc:
       {|Include a timing summary with the results. If output format is json,
- provides times for each pair (rule, target).
+ provides times for each pair (rule, target). This feature is meant for internal use and may be changed or removed without warning. At the current moment, --trace is better supported.
 |}
 
 let o_trace : bool Term.t =
@@ -656,14 +638,10 @@ This may still run Pro rules, but only using the OSS features.
   in
   Arg.value (Arg.flag info)
 
-let blurb_pro =
-  "Requires Semgrep Pro Engine. See https://semgrep.dev/products/pro-engine/ \
-   for more."
-
 let o_pro_languages : bool Term.t =
   let info =
     Arg.info [ "pro-languages" ]
-      ~doc:("Enable Pro languages (currently Apex and Elixir). " ^ blurb_pro)
+      ~doc:("Enable Pro languages (currently Apex and Elixir). " ^ C.blurb_pro)
   in
   Arg.value (Arg.flag info)
 
@@ -672,14 +650,14 @@ let o_pro_intrafile : bool Term.t =
     Arg.info [ "pro-intrafile" ]
       ~doc:
         ("Intra-file inter-procedural taint analysis. Implies --pro-languages. "
-       ^ blurb_pro)
+       ^ C.blurb_pro)
   in
   Arg.value (Arg.flag info)
 
 let o_pro_path_sensitive : bool Term.t =
   let info =
     Arg.info [ "pro-path-sensitive" ]
-      ~doc:("Path sensitivity. Implies --pro-intrafile. " ^ blurb_pro)
+      ~doc:("Path sensitivity. Implies --pro-intrafile. " ^ C.blurb_pro)
   in
   Arg.value (Arg.flag info)
 
@@ -688,7 +666,7 @@ let o_pro : bool Term.t =
     Arg.info [ "pro" ]
       ~doc:
         ("Inter-file analysis and Pro languages (currently Apex and Elixir). "
-       ^ blurb_pro)
+       ^ C.blurb_pro)
   in
   Arg.value (Arg.flag info)
 
@@ -876,6 +854,14 @@ let o_dump_engine_path : bool Term.t =
 let o_dump_command_for_core : bool Term.t =
   let info =
     Arg.info [ "d"; "dump-command-for-core" ] ~doc:{|<internal, do not use>|}
+  in
+  Arg.value (Arg.flag info)
+
+let o_experimental_requirements_lockfiles : bool Term.t =
+  let info =
+    Arg.info
+      [ "enable-experimental-requirements" ]
+      ~doc:{|Experimental: support wider set of requirements lockfiles.|}
   in
   Arg.value (Arg.flag info)
 
@@ -1212,8 +1198,8 @@ let show_CLI_conf ~dump_ast ~dump_engine_path ~dump_command_for_core
       Some { Show.show_kind = Show.SupportedLanguages; json; common }
   | _else_ -> None
 
-let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~common :
-    Validate_subcommand.conf option =
+let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~common ~pro :
+    Validate_CLI.conf option =
   if validate then
     match rules_source with
     | Rules_source.Configs [] ->
@@ -1223,11 +1209,11 @@ let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~common :
            a rule"
     | Configs (_ :: _)
     | Pattern _ ->
-        Some { Validate_subcommand.rules_source; core_runner_conf; common }
+        Some { rules_source; pro; core_runner_conf; common }
   else None
 
 let test_CLI_conf ~test ~target_roots ~config ~json ~optimizations
-    ~test_ignore_todo ~strict ~common : Test_CLI.conf option =
+    ~test_ignore_todo ~strict ~pro ~common : Test_CLI.conf option =
   if test then
     let target =
       Test_CLI.target_kind_of_roots_and_config
@@ -1238,6 +1224,7 @@ let test_CLI_conf ~test ~target_roots ~config ~json ~optimizations
       Test_CLI.
         {
           target;
+          pro;
           strict;
           json;
           optimizations;
@@ -1260,17 +1247,17 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
   let combine allow_untrusted_validators autofix baseline_commit common config
       dataflow_traces diff_depth dryrun dump_ast dump_command_for_core
       dump_engine_path emacs emacs_outputs error exclude_ exclude_minified_files
-      exclude_rule_ids files_with_matches force_color gitlab_sast
-      gitlab_sast_outputs gitlab_secrets gitlab_secrets_outputs
-      _historical_secrets include_ incremental_output json json_outputs
-      junit_xml junit_xml_outputs lang ls matching_explanations
-      max_chars_per_line max_lines_per_finding max_log_list_entries
-      max_memory_mb max_target_bytes metrics num_jobs no_secrets_validation
-      nosem optimizations oss output pattern pro project_root pro_intrafile
-      pro_lang pro_path_sensitive remote replacement respect_gitignore
-      rewrite_rule_ids sarif sarif_outputs scan_unknown_extensions secrets
-      severity show_supported_languages strict target_roots test
-      test_ignore_todo text text_outputs time_flag timeout
+      exclude_rule_ids experimental_requirements_lockfiles files_with_matches
+      force_color gitlab_sast gitlab_sast_outputs gitlab_secrets
+      gitlab_secrets_outputs _historical_secrets include_ incremental_output
+      json json_outputs junit_xml junit_xml_outputs lang ls
+      matching_explanations max_chars_per_line max_lines_per_finding
+      max_log_list_entries max_memory_mb max_target_bytes metrics num_jobs
+      no_secrets_validation nosem optimizations oss output pattern pro
+      project_root pro_intrafile pro_lang pro_path_sensitive remote replacement
+      respect_gitignore rewrite_rule_ids sarif sarif_outputs
+      scan_unknown_extensions secrets severity show_supported_languages strict
+      target_roots test test_ignore_todo text text_outputs time_flag timeout
       _timeout_interfileTODO timeout_threshold trace trace_endpoint
       _use_osemgrep_sarif validate version version_check vim vim_outputs =
     let target_roots, imply_always_select_explicit_targets =
@@ -1389,13 +1376,13 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     (* ugly: validate should be a separate subcommand.
      * alt: we could move this code in a Validate_subcommand.cli_args()
      *)
-    let validate : Validate_subcommand.conf option =
-      validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~common
+    let validate : Validate_CLI.conf option =
+      validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~common ~pro
     in
     (* ugly: test should be a separate subcommand *)
     let test : Test_CLI.conf option =
       test_CLI_conf ~test ~target_roots ~config ~json ~optimizations
-        ~test_ignore_todo ~strict ~common
+        ~test_ignore_todo ~strict ~pro ~common
     in
     (* more sanity checks *)
     if
@@ -1442,6 +1429,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       trace;
       trace_endpoint;
       ls;
+      experimental_requirements_lockfiles;
     }
   in
   (* Term defines 'const' but also the '$' operator *)
@@ -1452,7 +1440,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ CLI_common.o_common $ o_config $ o_dataflow_traces $ o_diff_depth
     $ o_dryrun $ o_dump_ast $ o_dump_command_for_core $ o_dump_engine_path
     $ o_emacs $ o_emacs_outputs $ o_error $ o_exclude $ o_exclude_minified_files
-    $ o_exclude_rule_ids $ o_files_with_matches $ o_force_color $ o_gitlab_sast
+    $ o_exclude_rule_ids $ o_experimental_requirements_lockfiles
+    $ o_files_with_matches $ o_force_color $ o_gitlab_sast
     $ o_gitlab_sast_outputs $ o_gitlab_secrets $ o_gitlab_secrets_outputs
     $ o_historical_secrets $ o_include $ o_incremental_output $ o_json
     $ o_json_outputs $ o_junit_xml $ o_junit_xml_outputs $ o_lang $ o_ls

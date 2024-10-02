@@ -127,9 +127,8 @@ install_requires = [
     "opentelemetry-instrumentation-requests~=0.46b0",
     "packaging>=21.0",
     "peewee~=3.14",
-    "pydantic~=2.8.2",
     "requests~=2.22",
-    "rich>=12.6.0",
+    "rich~=13.5.2",
     "ruamel.yaml>=0.16.0,<0.18",
     "tomli~=2.0.1",
     "typing-extensions~=4.2",
@@ -140,7 +139,7 @@ install_requires = [
 
 setuptools.setup(
     name="semgrep",
-    version="1.85.0",
+    version="1.90.0",
     author="Semgrep Inc.",
     author_email="support@semgrep.com",
     description="Lightweight static analysis for many languages. Find bug variants with patterns that look like source code.",

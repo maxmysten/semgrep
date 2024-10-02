@@ -16,6 +16,9 @@ type t = {
 }
 [@@deriving show]
 
+(* Useful if we want to raise a core_error *)
+exception Unhandled_core_error of t
+
 module ErrorSet : Set.S with type elt = t
 
 (*****************************************************************************)
@@ -23,7 +26,7 @@ module ErrorSet : Set.S with type elt = t
 (*****************************************************************************)
 
 val mk_error :
-  ?rule_id:Rule_ID.t option ->
+  ?rule_id:Rule_ID.t ->
   ?msg:string ->
   Tok.location ->
   Semgrep_output_v1_t.error_type ->

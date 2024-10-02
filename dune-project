@@ -21,7 +21,7 @@
 (generate_opam_files)
 
 ;; set here so the semgrep package below can use it and we can easily bump it
-(version 1.85.0)
+(version 1.90.0)
 
 ;; Default attributes of opam packages
 (source (github semgrep/semgrep))
@@ -435,7 +435,7 @@ For more information see https://semgrep.dev
   )
   (maintainers "Yoann Padioleau <pad@semgrep.com>")
   (authors "Yoann Padioleau <pad@semgrep.com>")
-  (license "LGPL-2.1")
+  (license "LGPL-2.1-only")
 
 ;note: these are build dependencies. Development-only deps are in 'dev/*.opam'.
 ;note: we don't include here as dependencies all the libraries
@@ -557,7 +557,7 @@ Uses indentation and standard braces to determine a crude parse tree
   )
   (maintainers "martin@semgrep.com")
   (authors "Semgrep authors")
-  (license "LGPL-2.1")
+  (license "LGPL-2.1-only")
 
   (depends
     alcotest

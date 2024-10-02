@@ -13,7 +13,7 @@ val env_extra : string
 val mk_config : unit -> Core_scan_config.t
 
 val output_core_results :
-  < Cap.stdout ; Cap.exit > ->
+  < Cap.stdout ; Cap.stderr ; Cap.exit > ->
   Core_result.result_or_exn ->
   Core_scan_config.t ->
   unit
@@ -30,3 +30,6 @@ val options :
 val action : string ref
 val all_actions : Cap.all_caps -> unit -> Arg_.action_spec list
 val register_exception_printers : unit -> unit
+
+(* this can raise exn; useful in test context *)
+val main_exn : Cap.all_caps -> string array -> unit

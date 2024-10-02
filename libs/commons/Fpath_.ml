@@ -12,6 +12,7 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the file
  * LICENSE for more details.
  *)
+open Eq.Operators
 
 (*****************************************************************************)
 (* Prelude *)
@@ -51,3 +52,30 @@ let current_dir = Fpath.v "."
 (* TODO: get rid of! *)
 let fake_file : Fpath.t = Fpath.v "_NOT_A_FILE_"
 let is_fake_file (f : Fpath.t) : bool = Fpath.equal f fake_file
+let to_yojson file = `String (Fpath.to_string file)
+
+let of_yojson = function
+  | `String path ->
+      Fpath.of_string path
+      |> Result.map_error (fun (`Msg error_str) -> error_str)
+  | other ->
+      Error
+        (Printf.sprintf "Expected `String, received %s"
+           (Yojson.Safe.pretty_to_string other))
+
+let exts (p : Fpath.t) : string list =
+  (* ex: ".tar.gz" *)
+  let ext = Fpath.get_ext ~multi:true p in
+  String.split_on_char '.' ext |> List_.exclude (fun s -> s = "")
+
+let split_ext ?multi (p : Fpath.t) : Fpath.t * string =
+  (Fpath.rem_ext ?multi p, Fpath.get_ext ?multi p)
+
+let () =
+  Testo.test "Fpath_.exts" (fun () ->
+      assert (exts (Fpath.v "foo.tar.gz") =*= [ "tar"; "gz" ]));
+  Testo.test "Fpath_.split_ext" (fun () ->
+      assert (
+        split_ext ~multi:true (Fpath.v "a/foo.tar.gz")
+        =*= (Fpath.v "a/foo", ".tar.gz")));
+  ()

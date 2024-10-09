@@ -250,9 +250,6 @@ let dump_tree_sitter_cst lang file =
   | Lang.Dockerfile ->
       Tree_sitter_dockerfile.Parse.file file
       |> dump_and_print_errors Tree_sitter_dockerfile.Boilerplate.dump_tree
-  | Lang.Move_on_sui ->
-        Tree_sitter_move_on_sui.Parse.file file
-        |> dump_and_print_errors Tree_sitter_move_on_sui.Boilerplate.dump_tree
            Tree_sitter_dockerfile.Boilerplate.dump_extras
   | _ -> failwith "lang not supported by ocaml-tree-sitter"
 
